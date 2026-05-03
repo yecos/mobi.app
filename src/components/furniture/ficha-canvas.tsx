@@ -40,6 +40,12 @@ export default function FichaCanvas({ inlineEditing = true, showDebug = false }:
     }
   }, [imgDisplay.width, imgDisplay.height]);
 
+  // Also measure when image finishes loading (handles race condition
+  // where the effect runs before the <img> has decoded its src)
+  const handleImgLoad = useCallback(() => {
+    measureImg();
+  }, [measureImg]);
+
   useEffect(() => {
     const img = imgRef.current;
     if (!img) return;
@@ -69,6 +75,7 @@ export default function FichaCanvas({ inlineEditing = true, showDebug = false }:
         src={uploadedImage}
         alt="Ficha técnica"
         draggable={false}
+        onLoad={handleImgLoad}
         style={{
           width: "100%",
           height: "auto",
@@ -118,7 +125,7 @@ export default function FichaCanvas({ inlineEditing = true, showDebug = false }:
                   fontSize: fontSize + "px",
                   lineHeight: "1",
                   fontWeight: region.bold ? "bold" : "normal",
-                  color: "#000000",
+                  color: region.color,
                   backgroundColor: "transparent",
                   border: "none",
                   outline: "none",
@@ -126,6 +133,11 @@ export default function FichaCanvas({ inlineEditing = true, showDebug = false }:
                   margin: "0",
                   display: "block",
                   fontFamily: "Arial, Helvetica, sans-serif",
+                  // Force top-alignment: shrink-wrap the text line to its
+                  // own height instead of letting the input center it.
+                  // Most browsers honor this for single-line inputs.
+                  verticalAlign: "top",
+                  boxSizing: "border-box",
                 }}
                 autoFocus={isActive}
               />
@@ -135,7 +147,7 @@ export default function FichaCanvas({ inlineEditing = true, showDebug = false }:
                   fontSize: fontSize + "px",
                   lineHeight: "1",
                   fontWeight: region.bold ? "bold" : "normal",
-                  color: "#000000",
+                  color: region.color,
                   fontFamily: "Arial, Helvetica, sans-serif",
                   whiteSpace: "nowrap",
                   overflow: "hidden",

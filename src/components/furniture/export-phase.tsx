@@ -47,12 +47,14 @@ export default function ExportPhase() {
       ctx.fillStyle = "#FFFFFF";
       ctx.fillRect(x, y, w, h);
 
-      // Black text — fontSize = bounding box height, rendered from top
+      // Black text — rendered from top of bounding box
+      // fontSize is already calibrated (0.80× bounding box height) so text
+      // fits inside the white rectangle without overflow.
       const isBold = region.bold ? "bold " : "";
       ctx.font = `${isBold}${region.fontSize}px Arial, sans-serif`;
       ctx.fillStyle = "#000000";
       ctx.textBaseline = "top";
-      ctx.fillText(region.text, x + 1, y + 1);
+      ctx.fillText(region.text, x, y);
     }
 
     return canvas;

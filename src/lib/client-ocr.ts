@@ -212,7 +212,10 @@ export async function detectText(
   const worker = await getWorker(onProgress);
   onProgress?.(10);
 
-  const { data } = await worker.recognize(imageDataUrl);
+  // CRITICAL: Must request { tsv: true } in the output options.
+  // Without it, data.tsv is null and the code falls back to fallbackFromText()
+  // which uses estimated (wrong) positions instead of actual OCR bounding boxes.
+  const { data } = await worker.recognize(imageDataUrl, {}, { text: true, tsv: true });
   console.log("[OCR] Recognition done. Confidence:", data.confidence);
   console.log("[OCR] Text preview:", (data.text || "").slice(0, 150));
 
@@ -277,10 +280,11 @@ export async function detectText(
 
     if (lineH < 5 || lineW < 5) continue;
 
-    // Font size: store the padded bounding box height.
-    // The canvas component uses this directly as the display fontSize
-    // with lineHeight: 1, so the text fills the white box exactly.
-    const estimatedFontSize = Math.max(8, Math.round(lineH));
+    // Font size: the bounding box height includes ascenders + descenders + padding,
+    // but CSS fontSize is the em-square size which is smaller than the full glyph height.
+    // For most fonts (Arial, etc.) the ratio is roughly 0.75–0.85.
+    // We use 0.80 as a reasonable default that keeps text inside the overlay box.
+    const estimatedFontSize = Math.max(8, Math.round(lineH * 0.80));
 
     const region: TextRegion = {
       id: `text-${regions.length + 1}`,
