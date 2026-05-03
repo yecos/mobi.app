@@ -15,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Mobili — Mobiliario de Diseño",
+  title: "Mobili — Visor Técnico de Mobiliario",
   description:
-    "Explora nuestra colección de mobiliario escandinavo y contemporáneo con vista 3D interactiva.",
+    "Visor técnico de mobiliario con vista 3D interactiva, mediciones y especificaciones. Soporta modelos GLB, GLTF y SKP.",
   icons: {
     icon: "/favicon.ico",
   },
