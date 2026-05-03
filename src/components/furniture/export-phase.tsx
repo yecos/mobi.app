@@ -18,13 +18,14 @@ export default function ExportPhase() {
   const composeCanvas = useCallback(async (): Promise<HTMLCanvasElement | null> => {
     if (!uploadedImage || !detectionResult || editedRegions.length === 0) return null;
 
-    const { imageWidth, imageHeight, bgColor } = detectionResult;
+    const { imageWidth, imageHeight } = detectionResult;
     const canvas = document.createElement("canvas");
     canvas.width = imageWidth;
     canvas.height = imageHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
 
+    // Draw original image
     const bgImg = new Image();
     bgImg.crossOrigin = "anonymous";
     await new Promise<void>((resolve, reject) => {
@@ -34,6 +35,7 @@ export default function ExportPhase() {
     });
     ctx.drawImage(bgImg, 0, 0, imageWidth, imageHeight);
 
+    // Paint over detected regions with white background + black text
     for (const region of editedRegions) {
       const x = (region.x / 100) * imageWidth;
       const y = (region.y / 100) * imageHeight;
@@ -41,14 +43,16 @@ export default function ExportPhase() {
       const h = (region.h / 100) * imageHeight;
       if (!region.text) continue;
 
-      ctx.fillStyle = bgColor || "#E5E5E5";
+      // White background to cover original text
+      ctx.fillStyle = "#FFFFFF";
       ctx.fillRect(x, y, w, h);
 
+      // Black text
       const isBold = region.bold ? "bold " : "";
       ctx.font = `${isBold}${region.fontSize}px sans-serif`;
-      ctx.fillStyle = region.color || "#1a1a1a";
+      ctx.fillStyle = "#000000";
       ctx.textBaseline = "top";
-      ctx.fillText(region.text, x + 2, y + 2);
+      ctx.fillText(region.text, x + 1, y + 1);
     }
 
     return canvas;

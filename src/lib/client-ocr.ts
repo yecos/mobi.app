@@ -265,7 +265,7 @@ export async function detectText(
       w: parseFloat(((lineW / imgW) * 100).toFixed(2)),
       h: parseFloat(((lineH / imgH) * 100).toFixed(2)),
       text,
-      fontSize: Math.round(lineH * 0.82),
+      fontSize: Math.round(lineH * 0.85),
       color: detectTextColor(ctx, x0, y0, lineW, lineH, imgW, imgH),
       bold: false,
       editable: true,
