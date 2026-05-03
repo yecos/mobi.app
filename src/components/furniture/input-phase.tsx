@@ -623,10 +623,12 @@ function ManualMode() {
       let parsed: FurnitureData;
       let jsStr = manualJsData.trim();
 
-      // Remove JS single-line comments
-      jsStr = jsStr.replace(/\/\/.*$/gm, "");
+      // Remove JS single-line comments (but preserve URLs with //)
+      jsStr = jsStr.replace(/(?<![:"'])\/\/.*$/gm, "");
       // Remove JS multi-line comments
       jsStr = jsStr.replace(/\/\*[\s\S]*?\*\//g, "");
+      // Remove export keyword
+      jsStr = jsStr.replace(/^export\s+/m, "");
       // Remove variable declarations: const data = , let x = , var foo =
       jsStr = jsStr.replace(/^(?:const|let|var)\s+\w+\s*=\s*/m, "");
       // Remove trailing semicolons
@@ -641,6 +643,13 @@ function ManualMode() {
       }
 
       let jsonStr = jsonMatch[0];
+
+      // Quote unquoted property names: { key: or , key: → { "key": or , "key":
+      // Only matches word characters before colon that aren't already quoted
+      jsonStr = jsonStr.replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3');
+
+      // Convert single-quoted strings to double-quoted
+      jsonStr = jsonStr.replace(/'([^']*)'/g, '"$1"');
 
       // Remove trailing commas before } or ] (invalid in strict JSON)
       jsonStr = jsonStr.replace(/,\s*([}\]])/g, "$1");
