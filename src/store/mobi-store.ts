@@ -1,7 +1,5 @@
 import { create } from "zustand";
 
-// ─── Types ────────────────────────────────────────────
-
 export interface FurnitureDimensions {
   width: number;
   height: number;
@@ -36,27 +34,28 @@ export interface FurnitureData {
 
 export interface GridField {
   id: string;
-  label: string;
   cells: string;
-  // Percentage-based positioning (responsive)
-  xPct: number;
-  yPct: number;
-  wPct: number;
-  hPct: number;
-  // Pixel-based (for export canvas)
+  text: string;
+  fontSize: number;
+  type: "text" | "number" | "label" | "color";
+  editable: boolean;
   x: number;
   y: number;
   w: number;
   h: number;
-  fontSize: "small" | "medium" | "large";
-  bold: boolean;
-  type: "text" | "number";
+}
+
+export interface GridPositions {
+  sheetBgColor: string;
+  fields: GridField[];
+  imageWidth: number;
+  imageHeight: number;
 }
 
 export interface ExtraElement {
   id: string;
   type: "logo" | "stamp" | "image" | "text";
-  data: string; // base64 for images, text for text
+  data: string;
   x: number;
   y: number;
   w: number;
@@ -65,19 +64,11 @@ export interface ExtraElement {
 }
 
 export type AppPhase = "input" | "generating" | "review" | "editing" | "export";
-export type InputMode = "ai" | "manual";
 
 interface MobiStore {
-  // Phase
   phase: AppPhase;
   setPhase: (phase: AppPhase) => void;
-
-  // Input mode
-  inputMode: InputMode;
-  setInputMode: (mode: InputMode) => void;
-
-  // Input
-  uploadedImage: string | null; // base64
+  uploadedImage: string | null;
   uploadedImageName: string | null;
   userDimensions: FurnitureDimensions;
   userBrand: string;
@@ -86,47 +77,22 @@ interface MobiStore {
   setUserDimensions: (dims: Partial<FurnitureDimensions>) => void;
   setUserBrand: (brand: string) => void;
   setUserProductName: (name: string) => void;
-
-  // Manual import
-  manualReferenceImage: string | null;
-  manualCanvasImage: string | null;
-  manualJsData: string;
-  setManualReferenceImage: (img: string | null) => void;
-  setManualCanvasImage: (img: string | null) => void;
-  setManualJsData: (js: string) => void;
-
-  // AI Generated
   furnitureData: FurnitureData | null;
-  referenceImage: string | null; // Image A: ficha completa con texto
+  referenceImage: string | null;
+  gridPositions: GridPositions | null;
   setFurnitureData: (data: FurnitureData) => void;
   setReferenceImage: (img: string | null) => void;
-
-  // Grid-detected fields (replaces FichaLayout)
-  gridFields: GridField[];
-  sheetBgColor: string;
-  imgWidth: number;
-  imgHeight: number;
-  setGridFields: (fields: GridField[]) => void;
-  setSheetBgColor: (color: string) => void;
-  setImgDimensions: (w: number, h: number) => void;
-
-  // Editable fields (values the user can modify)
+  setGridPositions: (positions: GridPositions) => void;
   editedData: FurnitureData | null;
   updateField: (path: string, value: unknown) => void;
-
-  // Extras
   extras: ExtraElement[];
   addExtra: (extra: ExtraElement) => void;
   removeExtra: (id: string) => void;
   updateExtra: (id: string, updates: Partial<ExtraElement>) => void;
-
-  // Generation status
   generatingStep: string | null;
   error: string | null;
   setGeneratingStep: (step: string | null) => void;
   setError: (error: string | null) => void;
-
-  // Reset
   reset: () => void;
 }
 
@@ -139,31 +105,20 @@ const defaultDimensions: FurnitureDimensions = {
 
 const initialState = {
   phase: "input" as AppPhase,
-  inputMode: "ai" as InputMode,
   uploadedImage: null as string | null,
   uploadedImageName: null as string | null,
   userDimensions: { ...defaultDimensions },
   userBrand: "VIVA MOBILI",
   userProductName: "",
-  manualReferenceImage: null as string | null,
-  manualCanvasImage: null as string | null,
-  manualJsData: "",
   furnitureData: null as FurnitureData | null,
   referenceImage: null as string | null,
-  gridFields: [] as GridField[],
-  sheetBgColor: "#E5E5E5",
-  imgWidth: 1024,
-  imgHeight: 1536,
+  gridPositions: null as GridPositions | null,
   editedData: null as FurnitureData | null,
   extras: [] as ExtraElement[],
   generatingStep: null as string | null,
   error: null as string | null,
 };
 
-/**
- * Deep-set a value at a dot-separated path inside a nested object.
- * Returns a new object (immutable).
- */
 function setPathValue(obj: Record<string, any>, path: string, value: unknown): Record<string, any> {
   const keys = path.split(".");
   const result: Record<string, any> = JSON.parse(JSON.stringify(obj));
@@ -180,61 +135,24 @@ function setPathValue(obj: Record<string, any>, path: string, value: unknown): R
 
 export const useMobiStore = create<MobiStore>((set) => ({
   ...initialState,
-
-  // Phase
   setPhase: (phase) => set({ phase }),
-
-  // Input mode
-  setInputMode: (mode) => set({ inputMode: mode }),
-
-  // Input
-  setUploadedImage: (data, name) =>
-    set({ uploadedImage: data, uploadedImageName: name }),
-  setUserDimensions: (dims) =>
-    set((state) => ({
-      userDimensions: { ...state.userDimensions, ...dims },
-    })),
+  setUploadedImage: (data, name) => set({ uploadedImage: data, uploadedImageName: name }),
+  setUserDimensions: (dims) => set((state) => ({ userDimensions: { ...state.userDimensions, ...dims } })),
   setUserBrand: (brand) => set({ userBrand: brand }),
   setUserProductName: (name) => set({ userProductName: name }),
-
-  // Manual import
-  setManualReferenceImage: (img) => set({ manualReferenceImage: img }),
-  setManualCanvasImage: (img) => set({ manualCanvasImage: img }),
-  setManualJsData: (js) => set({ manualJsData: js }),
-
-  // AI Generated
   setFurnitureData: (data) => set({ furnitureData: data, editedData: JSON.parse(JSON.stringify(data)) }),
   setReferenceImage: (img) => set({ referenceImage: img }),
-
-  // Grid fields
-  setGridFields: (fields) => set({ gridFields: fields }),
-  setSheetBgColor: (color) => set({ sheetBgColor: color }),
-  setImgDimensions: (w, h) => set({ imgWidth: w, imgHeight: h }),
-
-  // Editable fields
+  setGridPositions: (positions) => set({ gridPositions: positions }),
   updateField: (path, value) =>
     set((state) => {
       if (!state.editedData) return {};
-      const updated = setPathValue(state.editedData, path, value) as unknown as FurnitureData;
-      return { editedData: updated };
+      const updated = setPathValue(state.editedData as unknown as Record<string, unknown>, path, value);
+      return { editedData: updated as unknown as FurnitureData };
     }),
-
-  // Extras
-  addExtra: (extra) =>
-    set((state) => ({ extras: [...state.extras, extra] })),
-  removeExtra: (id) =>
-    set((state) => ({ extras: state.extras.filter((e) => e.id !== id) })),
-  updateExtra: (id, updates) =>
-    set((state) => ({
-      extras: state.extras.map((e) =>
-        e.id === id ? { ...e, ...updates } : e
-      ),
-    })),
-
-  // Generation status
+  addExtra: (extra) => set((state) => ({ extras: [...state.extras, extra] })),
+  removeExtra: (id) => set((state) => ({ extras: state.extras.filter((e) => e.id !== id) })),
+  updateExtra: (id, updates) => set((state) => ({ extras: state.extras.map((e) => e.id === id ? { ...e, ...updates } : e) })),
   setGeneratingStep: (step) => set({ generatingStep: step }),
   setError: (error) => set({ error }),
-
-  // Reset
   reset: () => set({ ...initialState, userDimensions: { ...defaultDimensions } }),
 }));

@@ -8,8 +8,12 @@ import { ArrowRight, ImageIcon } from "lucide-react";
 export default function ReviewPhase() {
   const referenceImage = useMobiStore((s) => s.referenceImage);
   const furnitureData = useMobiStore((s) => s.furnitureData);
-  const gridFields = useMobiStore((s) => s.gridFields);
+  const gridPositions = useMobiStore((s) => s.gridPositions);
   const setPhase = useMobiStore((s) => s.setPhase);
+
+  const editableFieldCount = gridPositions
+    ? gridPositions.fields.filter((f) => f.editable).length
+    : 0;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -42,9 +46,10 @@ export default function ReviewPhase() {
           </h2>
           <p className="text-muted-foreground text-sm">
             La IA generó tu ficha y detectó{" "}
-            <strong>{gridFields.length} campos editables</strong>. En el editor
-            podrás modificar textos y valores — las cajas editarás se
-            superpondrán sobre el texto original.
+            <strong>{editableFieldCount} campos editables</strong> de{" "}
+            <strong>{gridPositions?.fields.length ?? 0} campos totales</strong>.
+            En el editor podrás modificar textos y valores — las cajas
+            editarás se superpondrán sobre el texto original.
           </p>
           {furnitureData && (
             <p className="text-xs text-muted-foreground">

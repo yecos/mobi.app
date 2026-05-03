@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef } from "react";
-import { useMobiStore, type GridField } from "@/store/mobi-store";
+import { useMobiStore } from "@/store/mobi-store";
 import FichaCanvas from "./ficha-canvas";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,10 +19,7 @@ export default function ExportPhase() {
   const setPhase = useMobiStore((s) => s.setPhase);
   const referenceImage = useMobiStore((s) => s.referenceImage);
   const editedData = useMobiStore((s) => s.editedData);
-  const gridFields = useMobiStore((s) => s.gridFields);
-  const sheetBgColor = useMobiStore((s) => s.sheetBgColor);
-  const imgWidth = useMobiStore((s) => s.imgWidth);
-  const imgHeight = useMobiStore((s) => s.imgHeight);
+  const gridPositions = useMobiStore((s) => s.gridPositions);
   const extras = useMobiStore((s) => s.extras);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -65,20 +62,26 @@ export default function ExportPhase() {
     }
   }
 
-  function fontSizeToPx(size: "small" | "medium" | "large"): number {
+  function fontSizeNumToPx(size: number): number {
     switch (size) {
-      case "small": return 10;
-      case "medium": return 14;
-      case "large": return 20;
+      case 1: return 10;
+      case 2: return 14;
+      case 3: return 20;
+      default: return 14;
     }
   }
 
   const composeCanvas = useCallback(async (): Promise<HTMLCanvasElement | null> => {
-    if (!referenceImage || gridFields.length === 0 || !editedData) return null;
+    if (!referenceImage || !gridPositions || !editedData) return null;
+
+    const { fields, sheetBgColor, imageWidth, imageHeight } = gridPositions;
+    const editableFields = fields.filter((f) => f.editable);
+
+    if (editableFields.length === 0) return null;
 
     const canvas = document.createElement("canvas");
-    canvas.width = imgWidth;
-    canvas.height = imgHeight;
+    canvas.width = imageWidth;
+    canvas.height = imageHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
 
@@ -90,10 +93,10 @@ export default function ExportPhase() {
       bgImg.onerror = reject;
       bgImg.src = referenceImage;
     });
-    ctx.drawImage(bgImg, 0, 0, imgWidth, imgHeight);
+    ctx.drawImage(bgImg, 0, 0, imageWidth, imageHeight);
 
-    // Draw each field — paint bg color rect then text on top
-    for (const field of gridFields) {
+    // Draw each editable field — paint bg color rect then text on top
+    for (const field of editableFields) {
       const value = getExportValue(field.id, editedData as unknown as Record<string, unknown>);
       if (!value) continue;
 
@@ -102,8 +105,9 @@ export default function ExportPhase() {
       ctx.fillRect(field.x, field.y, field.w, field.h);
 
       // Draw the edited text
-      const pxSize = fontSizeToPx(field.fontSize);
-      ctx.font = `${field.bold ? "bold " : ""}${pxSize}px sans-serif`;
+      const pxSize = fontSizeNumToPx(field.fontSize);
+      const isBold = field.fontSize === 3;
+      ctx.font = `${isBold ? "bold " : ""}${pxSize}px sans-serif`;
       ctx.fillStyle = "#1a1a1a";
       ctx.textBaseline = "top";
       ctx.fillText(value, field.x + 2, field.y + 2);
@@ -122,27 +126,27 @@ export default function ExportPhase() {
               extraImg.src = extra.data;
             });
             // Convert percentage-based position to pixels
-            const ex = (extra.x / 100) * imgWidth;
-            const ey = (extra.y / 100) * imgHeight;
-            const ew = (extra.w / 1024) * imgWidth;
-            const eh = (extra.h / 1536) * imgHeight;
+            const ex = (extra.x / 100) * imageWidth;
+            const ey = (extra.y / 100) * imageHeight;
+            const ew = (extra.w / imageWidth) * imageWidth;
+            const eh = (extra.h / imageHeight) * imageHeight;
             ctx.drawImage(extraImg, ex, ey, ew, eh);
           } catch {
             // Skip invalid images
           }
         }
       } else if (extra.type === "text") {
-        const ex = (extra.x / 100) * imgWidth;
-        const ey = (extra.y / 100) * imgHeight;
+        const ex = (extra.x / 100) * imageWidth;
+        const ey = (extra.y / 100) * imageHeight;
         ctx.font = `${extra.fontSize ?? 16}px sans-serif`;
         ctx.fillStyle = "#1a1a1a";
         ctx.textBaseline = "top";
         ctx.fillText(extra.data, ex, ey);
       } else if (extra.type === "stamp") {
-        const ex = (extra.x / 100) * imgWidth;
-        const ey = (extra.y / 100) * imgHeight;
-        const ew = (extra.w / 1024) * imgWidth;
-        const eh = (extra.h / 1536) * imgHeight;
+        const ex = (extra.x / 100) * imageWidth;
+        const ey = (extra.y / 100) * imageHeight;
+        const ew = (extra.w / imageWidth) * imageWidth;
+        const eh = (extra.h / imageHeight) * imageHeight;
         ctx.font = "bold 14px sans-serif";
         ctx.fillStyle = "#4a4a4a";
         ctx.textAlign = "center";
@@ -152,7 +156,7 @@ export default function ExportPhase() {
     }
 
     return canvas;
-  }, [referenceImage, gridFields, editedData, extras, sheetBgColor, imgWidth, imgHeight]);
+  }, [referenceImage, gridPositions, editedData, extras]);
 
   const handleDownloadPNG = useCallback(async () => {
     try {

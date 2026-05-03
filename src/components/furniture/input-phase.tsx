@@ -1,12 +1,11 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { useMobiStore, type InputMode, type FurnitureData, type GridField } from "@/store/mobi-store";
+import { useMobiStore, type FurnitureData } from "@/store/mobi-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea";
 import { motion } from "framer-motion";
 import {
   Upload,
@@ -14,224 +13,8 @@ import {
   Image as ImageIcon,
   X,
   Ruler,
-  FileJson,
-  PenTool,
-  Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
-
-// ─── Shared file-to-base64 helper ──────────────────────
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => resolve(e.target?.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-// ─── Mode Toggle ───────────────────────────────────────
-function ModeToggle({
-  mode,
-  onChange,
-}: {
-  mode: InputMode;
-  onChange: (m: InputMode) => void;
-}) {
-  return (
-    <div className="flex rounded-lg border border-border/50 p-1 bg-muted/30">
-      <button
-        onClick={() => onChange("ai")}
-        className={`
-          flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all
-          ${
-            mode === "ai"
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }
-        `}
-      >
-        <Wand2 className="h-4 w-4" />
-        Generar con IA
-      </button>
-      <button
-        onClick={() => onChange("manual")}
-        className={`
-          flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all
-          ${
-            mode === "manual"
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }
-        `}
-      >
-        <PenTool className="h-4 w-4" />
-        Importar Manual
-      </button>
-    </div>
-  );
-}
-
-// ─── Fallback fields (when grid detection returns nothing) ──
-function createFallbackFields(data: FurnitureData): GridField[] {
-  const fields: GridField[] = [];
-  let row = 2;
-
-  const addField = (id: string, label: string, type: "text" | "number" = "text") => {
-    fields.push({
-      id,
-      label,
-      cells: `A${row}:C${row}`,
-      xPct: 0, yPct: (row - 1) / 24 * 100,
-      wPct: 37.5, hPct: 1 / 24 * 100,
-      x: 0, y: (row - 1) * 64,
-      w: 384, h: 64,
-      fontSize: "medium",
-      bold: id === "brand",
-      type,
-    });
-    row++;
-  };
-
-  addField("brand", data.brand || "VIVA MOBILI");
-  addField("productType", data.productType);
-  addField("f-style", data.style);
-  addField("f-material", data.material?.main || "");
-  addField("f-finish", data.finish);
-  addField("f-feature", data.feature);
-  addField("f-width", String(data.dimensions?.width || ""), "number");
-  addField("f-height", String(data.dimensions?.height || ""), "number");
-  addField("f-depth", String(data.dimensions?.depth || ""), "number");
-  if (data.dimensions?.seatHeight) {
-    addField("f-seatHeight", String(data.dimensions.seatHeight), "number");
-  }
-  addField("f-weight", String(data.weight || ""), "number");
-
-  (data.annotations || []).forEach((ann, i) => {
-    addField(`ann-${i + 1}`, ann);
-  });
-
-  return fields;
-}
-
-// ─── Image Uploader Slot ───────────────────────────────
-function ImageSlot({
-  label,
-  description,
-  image,
-  onImageSet,
-  onImageClear,
-  error,
-}: {
-  label: string;
-  description: string;
-  image: string | null;
-  onImageSet: (data: string) => void;
-  onImageClear: () => void;
-  error?: string;
-}) {
-  const [isDragOver, setIsDragOver] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const handleFile = useCallback(
-    async (file: File) => {
-      if (!file.type.match(/^image\/(jpeg|png|webp)$/)) {
-        toast.error("Formato no soportado. Usa JPG, PNG o WebP.");
-        return;
-      }
-      if (file.size > 20 * 1024 * 1024) {
-        toast.error("La imagen es demasiado grande. Máximo 20MB.");
-        return;
-      }
-      const base64 = await fileToBase64(file);
-      onImageSet(base64);
-    },
-    [onImageSet]
-  );
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragOver(false);
-      const file = e.dataTransfer.files[0];
-      if (file) handleFile(file);
-    },
-    [handleFile]
-  );
-
-  if (image) {
-    return (
-      <div className="relative rounded-xl overflow-hidden border border-border/50 bg-muted/30">
-        <div className="flex items-center gap-3 p-3">
-          <div className="h-20 w-20 rounded-lg overflow-hidden flex-shrink-0 bg-muted">
-            <img
-              src={image}
-              alt={label}
-              className="h-full w-full object-cover"
-            />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium">{label}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Imagen cargada
-            </p>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onImageClear}
-            className="flex-shrink-0 text-muted-foreground hover:text-destructive"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-1.5">
-      <Label className="text-sm font-semibold">{label}</Label>
-      <div
-        onDrop={handleDrop}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setIsDragOver(true);
-        }}
-        onDragLeave={() => setIsDragOver(false)}
-        onClick={() => fileRef.current?.click()}
-        className={`
-          border-2 border-dashed rounded-xl p-6 cursor-pointer transition-all
-          text-center
-          ${
-            isDragOver
-              ? "border-primary bg-primary/5 scale-[1.01]"
-              : error
-                ? "border-destructive/50 bg-destructive/5"
-                : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50"
-          }
-        `}
-      >
-        <Upload className="mx-auto h-8 w-8 text-muted-foreground/60 mb-2" />
-        <p className="text-sm font-medium">{description}</p>
-        <p className="text-xs text-muted-foreground mt-1">
-          JPG, PNG o WebP — máximo 20MB
-        </p>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleFile(file);
-          }}
-          className="hidden"
-        />
-      </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
-    </div>
-  );
-}
 
 // ─── AI Mode ───────────────────────────────────────────
 function AIMode() {
@@ -248,9 +31,7 @@ function AIMode() {
     setPhase,
     setFurnitureData,
     setReferenceImage,
-    setGridFields,
-    setSheetBgColor,
-    setImgDimensions,
+    setGridPositions,
     setGeneratingStep,
     setError,
   } = useMobiStore();
@@ -303,23 +84,18 @@ function AIMode() {
     setError(null);
 
     try {
-      // Step 1: Analyze photo + Generate ficha image IN PARALLEL
-      setGeneratingStep("Analizando imagen y generando ficha...");
+      // Step 1: Analyze photo
+      setGeneratingStep("Analizando imagen...");
 
-      const [analyzeRes, sheetRes] = await Promise.all([
-        fetch("/api/analyze-photo", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            image: uploadedImage,
-            dimensions: userDimensions,
-            brand: userBrand,
-          }),
+      const analyzeRes = await fetch("/api/analyze-photo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image: uploadedImage,
+          dimensions: userDimensions,
+          brand: userBrand,
         }),
-        // We'll generate the image after we get furniture data,
-        // so for now just analyze
-        Promise.resolve(null as Response | null),
-      ]);
+      });
 
       if (!analyzeRes.ok) {
         const errData = await analyzeRes.json();
@@ -327,7 +103,7 @@ function AIMode() {
       }
 
       const analyzeData = await analyzeRes.json();
-      const furnitureData = analyzeData.data;
+      const furnitureData: FurnitureData = analyzeData.data;
 
       // Override with user-provided values
       furnitureData.brand = userBrand;
@@ -339,7 +115,7 @@ function AIMode() {
         seatHeight:
           userDimensions.seatHeight ||
           furnitureData.dimensions?.seatHeight ||
-          null,
+          undefined,
       };
       if (userProductName) {
         furnitureData.productName = userProductName;
@@ -370,7 +146,10 @@ function AIMode() {
       const detectRes = await fetch("/api/detect-positions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: sheetData.image }),
+        body: JSON.stringify({
+          image: sheetData.image,
+          furnitureData,
+        }),
       });
 
       if (!detectRes.ok) {
@@ -380,21 +159,8 @@ function AIMode() {
 
       const detectData = await detectRes.json();
 
-      // If no fields detected, try once more with lower grid
-      let fields: GridField[] = detectData.fields || [];
-      let bgColor = detectData.sheetBgColor || "#E5E5E5";
-      let imgW = detectData.imgWidth || 1024;
-      let imgH = detectData.imgHeight || 1536;
-
-      if (fields.length === 0) {
-        // Fallback: create basic fields from furniture data
-        fields = createFallbackFields(furnitureData);
-        bgColor = "#E5E5E5";
-      }
-
-      setSheetBgColor(bgColor);
-      setImgDimensions(imgW, imgH);
-      setGridFields(fields);
+      // The API wraps result in { result: ... }
+      setGridPositions(detectData.result);
 
       // Small delay for UX
       await new Promise((r) => setTimeout(r, 500));
@@ -419,9 +185,7 @@ function AIMode() {
     setGeneratingStep,
     setFurnitureData,
     setReferenceImage,
-    setGridFields,
-    setSheetBgColor,
-    setImgDimensions,
+    setGridPositions,
   ]);
 
   const removeImage = useCallback(() => {
@@ -637,264 +401,8 @@ function AIMode() {
   );
 }
 
-// ─── Manual Mode ───────────────────────────────────────
-function ManualMode() {
-  const {
-    manualReferenceImage,
-    manualJsData,
-    setManualReferenceImage,
-    setManualJsData,
-    setPhase,
-    setFurnitureData,
-    setReferenceImage,
-    setGridFields,
-    setSheetBgColor,
-    setImgDimensions,
-    setGeneratingStep,
-  } = useMobiStore();
-
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const jsFileRef = useRef<HTMLInputElement>(null);
-
-  const handleJsFile = useCallback(
-    async (file: File) => {
-      try {
-        const text = await file.text();
-        setManualJsData(text);
-        setErrors((prev) => ({ ...prev, js: "" }));
-      } catch {
-        toast.error("No se pudo leer el archivo JS/JSON");
-      }
-    },
-    [setManualJsData]
-  );
-
-  const validate = useCallback(() => {
-    const newErrors: Record<string, string> = {};
-    if (!manualReferenceImage)
-      newErrors.refImage = "Sube la ficha técnica (imagen con texto)";
-    if (!manualJsData.trim()) newErrors.js = "Pega o sube el JS/JSON";
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  }, [manualReferenceImage, manualJsData]);
-
-  const handleImport = useCallback(async () => {
-    if (!validate()) {
-      toast.error("Completa todos los campos requeridos");
-      return;
-    }
-
-    try {
-      // Parse JS/JSON data — supports multiple formats
-      let parsed: FurnitureData;
-      let jsStr = manualJsData.trim();
-
-      // Remove JS single-line comments (but preserve URLs with //)
-      jsStr = jsStr.replace(/(?<![:"'])\/\/.*$/gm, "");
-      // Remove JS multi-line comments
-      jsStr = jsStr.replace(/\/\*[\s\S]*?\*\//g, "");
-      // Remove export keyword
-      jsStr = jsStr.replace(/^export\s+/m, "");
-      // Remove variable declarations: const data = , let x = , var foo =
-      jsStr = jsStr.replace(/^(?:const|let|var)\s+\w+\s*=\s*/m, "");
-      // Remove trailing semicolons
-      jsStr = jsStr.replace(/;\s*$/, "");
-      // Trim again
-      jsStr = jsStr.trim();
-
-      // Extract the JSON object
-      const jsonMatch = jsStr.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error("No se encontró un objeto JSON válido en el texto");
-      }
-
-      let jsonStr = jsonMatch[0];
-
-      // Quote unquoted property names: { key: or , key: → { "key": or , "key":
-      // Only matches word characters before colon that aren't already quoted
-      jsonStr = jsonStr.replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3');
-
-      // Convert single-quoted strings to double-quoted
-      jsonStr = jsonStr.replace(/'([^']*)'/g, '"$1"');
-
-      // Remove trailing commas before } or ] (invalid in strict JSON)
-      jsonStr = jsonStr.replace(/,\s*([}\]])/g, "$1");
-
-      parsed = JSON.parse(jsonStr);
-
-      // Validate minimum required fields
-      if (!parsed.productType) {
-        parsed.productType = "mueble";
-      }
-      if (!parsed.dimensions) {
-        parsed.dimensions = { width: 0, height: 0, depth: 0 };
-      }
-      if (!parsed.annotations) parsed.annotations = [];
-      if (!parsed.colorPalette) {
-        parsed.colorPalette = {
-          primary: "#8B6914",
-          primaryName: "Madera",
-          secondary: "#D4C5A9",
-          secondaryName: "Beige",
-          pearlGray: "#E5E5E5",
-          darkGray: "#4A4A4A",
-        };
-      }
-      if (!parsed.material) parsed.material = { main: "", details: [] };
-      if (!parsed.renderViews) parsed.renderViews = ["front", "side", "top", "perspective"];
-
-      // Set all data in the store
-      setFurnitureData(parsed);
-      setReferenceImage(manualReferenceImage);
-
-      // Auto-detect positions using grid + VLM
-      setPhase("generating");
-      setGeneratingStep("Detectando posiciones de texto...");
-
-      try {
-        const detectRes = await fetch("/api/detect-positions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: manualReferenceImage }),
-        });
-
-        if (detectRes.ok) {
-          const detectData = await detectRes.json();
-          const fields: GridField[] = detectData.fields || [];
-          if (fields.length > 0) {
-            setSheetBgColor(detectData.sheetBgColor || "#E5E5E5");
-            setImgDimensions(detectData.imgWidth || 1024, detectData.imgHeight || 1536);
-            setGridFields(fields);
-          } else {
-            // Fallback to generated fields
-            setGridFields(createFallbackFields(parsed));
-            setSheetBgColor("#E5E5E5");
-          }
-        } else {
-          // Fallback if detection fails
-          setGridFields(createFallbackFields(parsed));
-          setSheetBgColor("#E5E5E5");
-        }
-      } catch {
-        // Fallback if detection fails
-        setGridFields(createFallbackFields(parsed));
-        setSheetBgColor("#E5E5E5");
-      }
-
-      setGeneratingStep(null);
-      toast.success("Ficha importada correctamente");
-      setPhase("editing");
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Error al importar los datos";
-      toast.error(message);
-    }
-  }, [
-    validate,
-    manualJsData,
-    manualReferenceImage,
-    setFurnitureData,
-    setReferenceImage,
-    setGridFields,
-    setSheetBgColor,
-    setImgDimensions,
-    setPhase,
-    setGeneratingStep,
-  ]);
-
-  return (
-    <div className="space-y-6">
-      {/* Info banner */}
-      <div className="rounded-xl bg-primary/5 border border-primary/20 p-4">
-        <p className="text-sm text-foreground">
-          <strong>Modo Manual:</strong> Sube la imagen de la ficha técnica y el
-          objeto JS con los datos. Las posiciones de texto se detectan
-          automáticamente con IA. Podrás editar textos y valores.
-        </p>
-      </div>
-
-      {/* Ficha image */}
-      <ImageSlot
-        label="Imagen de la ficha técnica"
-        description="Arrastra la ficha completa con textos y números"
-        image={manualReferenceImage}
-        onImageSet={setManualReferenceImage}
-        onImageClear={() => setManualReferenceImage(null)}
-        error={errors.refImage}
-      />
-
-      {/* JS Data */}
-      <div className="space-y-1.5">
-        <Label className="text-sm font-semibold flex items-center gap-2">
-          <FileJson className="h-4 w-4" />
-          Datos JS / JSON
-        </Label>
-        <p className="text-xs text-muted-foreground">
-          Pega el objeto JS o sube un archivo .json / .js con los datos de la
-          ficha
-        </p>
-        <div className="flex gap-2 mb-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5 text-xs"
-            onClick={() => jsFileRef.current?.click()}
-          >
-            <Upload className="h-3 w-3" />
-            Subir archivo
-          </Button>
-          <input
-            ref={jsFileRef}
-            type="file"
-            accept=".json,.js,.txt"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) handleJsFile(file);
-            }}
-            className="hidden"
-          />
-          {manualJsData && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="gap-1.5 text-xs text-muted-foreground"
-              onClick={() => setManualJsData("")}
-            >
-              <X className="h-3 w-3" />
-              Limpiar
-            </Button>
-          )}
-        </div>
-        <Textarea
-          value={manualJsData}
-          onChange={(e) => {
-            setManualJsData(e.target.value);
-            setErrors((prev) => ({ ...prev, js: "" }));
-          }}
-          placeholder={`{\n  "productType": "silla",\n  "style": "escandinavo",\n  "material": { "main": "roble", "details": [] },\n  "finish": "mate",\n  "feature": "respaldo curvo",\n  "dimensions": { "width": 50, "height": 85, "depth": 52 },\n  "weight": 6,\n  "annotations": ["Madera maciza", "Acabado natural"],\n  "colorPalette": { "primary": "#8B6914", ... },\n  "brand": "VIVA MOBILI",\n  "productName": "Silla Nordic"\n}`}
-          className="font-mono text-xs h-48 resize-none"
-        />
-        {errors.js && <p className="text-xs text-destructive">{errors.js}</p>}
-      </div>
-
-      {/* Import Button */}
-      <Button
-        onClick={handleImport}
-        size="lg"
-        className="w-full text-base font-semibold h-12 gap-2"
-      >
-        <PenTool className="h-5 w-5" />
-        Importar y Editar
-      </Button>
-    </div>
-  );
-}
-
 // ─── Main Component ────────────────────────────────────
 export default function InputPhase() {
-  const inputMode = useMobiStore((s) => s.inputMode);
-  const setInputMode = useMobiStore((s) => s.setInputMode);
-
   return (
     <div className="min-h-screen flex items-center justify-center p-4 sm:p-6 lg:p-8">
       <motion.div
@@ -925,13 +433,7 @@ export default function InputPhase() {
 
         <Card className="border-border/50 shadow-xl">
           <CardContent className="p-6 space-y-6">
-            {/* Mode Toggle */}
-            <div className="flex justify-center">
-              <ModeToggle mode={inputMode} onChange={setInputMode} />
-            </div>
-
-            {/* Mode Content */}
-            {inputMode === "ai" ? <AIMode /> : <ManualMode />}
+            <AIMode />
           </CardContent>
         </Card>
       </motion.div>

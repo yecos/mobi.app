@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useMobiStore, type GridField, type ExtraElement } from "@/store/mobi-store";
+import { useMobiStore, type ExtraElement } from "@/store/mobi-store";
 
 interface FichaCanvasProps {
   scale: number;
@@ -101,14 +101,16 @@ function setFieldValue(
   }
 }
 
-function fontSizeToPx(size: "small" | "medium" | "large"): number {
+function fontSizeNumToPx(size: number): number {
   switch (size) {
-    case "small":
+    case 1:
       return 10;
-    case "medium":
+    case 2:
       return 14;
-    case "large":
+    case 3:
       return 20;
+    default:
+      return 14;
   }
 }
 
@@ -118,8 +120,7 @@ export default function FichaCanvas({
   onFieldClick,
 }: FichaCanvasProps) {
   const referenceImage = useMobiStore((s) => s.referenceImage);
-  const gridFields = useMobiStore((s) => s.gridFields);
-  const sheetBgColor = useMobiStore((s) => s.sheetBgColor);
+  const gridPositions = useMobiStore((s) => s.gridPositions);
   const editedData = useMobiStore((s) => s.editedData);
   const extras = useMobiStore((s) => s.extras);
   const updateField = useMobiStore((s) => s.updateField);
@@ -128,13 +129,15 @@ export default function FichaCanvas({
   const [draggingExtra, setDraggingExtra] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
-  if (!referenceImage || gridFields.length === 0) {
+  if (!referenceImage || !gridPositions || gridPositions.fields.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground">
         No hay datos del lienzo
       </div>
     );
   }
+
+  const { fields, sheetBgColor, imageWidth, imageHeight } = gridPositions;
 
   const handleExtraMouseDown = useCallback(
     (e: React.MouseEvent, extraId: string) => {
@@ -197,69 +200,80 @@ export default function FichaCanvas({
       />
 
       {/* Overlay editable fields — boxes with bg color that cover original text */}
-      {gridFields.map((field: GridField) => {
-        const isActive = activeFieldId === field.id;
-        const value = editedData
-          ? getFieldValue(field.id, editedData as unknown as Record<string, unknown>)
-          : "";
-        const pxFontSize = fontSizeToPx(field.fontSize);
-        // Scale font relative to container width (container ~640px at 100%)
-        const vwFont = `${pxFontSize / 6.4}vw`;
+      {fields
+        .filter((field) => field.editable)
+        .map((field) => {
+          const isActive = activeFieldId === field.id;
+          const value = editedData
+            ? getFieldValue(field.id, editedData as unknown as Record<string, unknown>)
+            : "";
+          const pxFontSize = fontSizeNumToPx(field.fontSize);
+          // Scale font relative to container width (container ~640px at 100%)
+          const vwFont = `${pxFontSize / 6.4}vw`;
 
-        return (
-          <div
-            key={field.id}
-            style={{
-              position: "absolute",
-              left: `${field.xPct}%`,
-              top: `${field.yPct}%`,
-              width: `${field.wPct}%`,
-              height: `${field.hPct}%`,
-            }}
-            className={`
-              flex items-center cursor-pointer transition-all
-              ${
-                isActive
-                  ? "ring-2 ring-primary/60 rounded-sm z-10"
-                  : "hover:ring-1 hover:ring-primary/30 rounded-sm"
-              }
-            `}
-            onClick={(e) => {
-              e.stopPropagation();
-              onFieldClick(field.id);
-            }}
-          >
-            {isActive ? (
-              <input
-                type={field.type === "number" ? "number" : "text"}
-                value={value}
-                onChange={(e) =>
-                  setFieldValue(field.id, e.target.value, updateField)
+          // Calculate percentages from pixel values
+          const xPct = (field.x / imageWidth) * 100;
+          const yPct = (field.y / imageHeight) * 100;
+          const wPct = (field.w / imageWidth) * 100;
+          const hPct = (field.h / imageHeight) * 100;
+
+          // Determine bold from fontSize (3 = large/bold)
+          const isBold = field.fontSize === 3;
+
+          return (
+            <div
+              key={field.id}
+              style={{
+                position: "absolute",
+                left: `${xPct}%`,
+                top: `${yPct}%`,
+                width: `${wPct}%`,
+                height: `${hPct}%`,
+              }}
+              className={`
+                flex items-center cursor-pointer transition-all
+                ${
+                  isActive
+                    ? "ring-2 ring-primary/60 rounded-sm z-10"
+                    : "hover:ring-1 hover:ring-primary/30 rounded-sm"
                 }
-                onClick={(e) => e.stopPropagation()}
-                className="w-full h-full bg-transparent text-foreground outline-none px-0.5"
-                style={{
-                  backgroundColor: sheetBgColor,
-                  fontSize: vwFont,
-                  fontWeight: field.bold ? "bold" : "normal",
-                }}
-                autoFocus
-              />
-            ) : (
-              <span
-                className="px-0.5 truncate w-full"
-                style={{
-                  backgroundColor: sheetBgColor,
-                  fontSize: vwFont,
-                  fontWeight: field.bold ? "bold" : "normal",
-                }}
-              >
-                {value}
-              </span>
-            )}
-          </div>
-        );
-      })}
+              `}
+              onClick={(e) => {
+                e.stopPropagation();
+                onFieldClick(field.id);
+              }}
+            >
+              {isActive ? (
+                <input
+                  type={field.type === "number" ? "number" : "text"}
+                  value={value}
+                  onChange={(e) =>
+                    setFieldValue(field.id, e.target.value, updateField)
+                  }
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full h-full bg-transparent text-foreground outline-none px-0.5"
+                  style={{
+                    backgroundColor: sheetBgColor,
+                    fontSize: vwFont,
+                    fontWeight: isBold ? "bold" : "normal",
+                  }}
+                  autoFocus
+                />
+              ) : (
+                <span
+                  className="px-0.5 truncate w-full"
+                  style={{
+                    backgroundColor: sheetBgColor,
+                    fontSize: vwFont,
+                    fontWeight: isBold ? "bold" : "normal",
+                  }}
+                >
+                  {value}
+                </span>
+              )}
+            </div>
+          );
+        })}
 
       {/* Extras */}
       {extras.map((extra: ExtraElement) => (
@@ -269,8 +283,8 @@ export default function FichaCanvas({
             position: "absolute",
             left: `${extra.x}%`,
             top: `${extra.y}%`,
-            width: `${extra.w / 1024 * 100}%`,
-            height: `${extra.h / 1536 * 100}%`,
+            width: `${(extra.w / imageWidth) * 100}%`,
+            height: `${(extra.h / imageHeight) * 100}%`,
           }}
           className={`border border-dashed border-primary/40 rounded cursor-grab active:cursor-grabbing ${draggingExtra === extra.id ? "ring-2 ring-primary/60" : ""}`}
           onMouseDown={(e) => handleExtraMouseDown(e, extra.id)}

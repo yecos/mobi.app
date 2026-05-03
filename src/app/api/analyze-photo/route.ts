@@ -8,7 +8,6 @@ export async function POST(request: NextRequest) {
 
     const openai = getOpenAI();
 
-    // Use gpt-5-mini vision to analyze the furniture image
     const analysis = await openai.chat.completions.create({
       model: "gpt-5-mini",
       messages: [
@@ -20,101 +19,70 @@ export async function POST(request: NextRequest) {
           role: "user",
           content: [
             {
-              type: "image_url",
-              image_url: { url: image, detail: "high" },
+              type: "image_url" as const,
+              image_url: { url: image },
             },
             {
-              type: "text",
-              text: `Analiza la imagen del mueble y genera los datos para una ficha técnica profesional.
+              type: "text" as const,
+              text: `Analyze this furniture image. The real dimensions provided by the user are: Width: ${dimensions.width}cm, Height: ${dimensions.height}cm, Depth: ${dimensions.depth}cm${dimensions.seatHeight ? `, Seat height: ${dimensions.seatHeight}cm` : ""}. Brand: ${brand}.
 
-Las dimensiones reales proporcionadas por el usuario son:
-- Ancho: ${dimensions.width} cm
-- Alto: ${dimensions.height} cm
-- Profundidad: ${dimensions.depth} cm
-${dimensions.seatHeight ? `- Altura del asiento: ${dimensions.seatHeight} cm` : ""}
-Marca: ${brand}
-
-Devuelve SOLO un objeto JSON válido con esta estructura exacta (bilingüe, métrico e imperial):
-
+Return ONLY a valid JSON object with this exact structure:
 {
-  "productType": "<tipo de producto en español>",
-  "style": "<estilo en español>",
+  "productType": "detected type (chair, table, sofa, etc.)",
+  "style": "detected style",
   "material": {
-    "main": "<material principal en español>",
-    "details": ["<detalle 1>", "<detalle 2>"]
+    "main": "main material",
+    "details": ["detail1", "detail2"]
   },
-  "finish": "<acabado en español>",
-  "feature": "<característica distintiva en español>",
+  "finish": "finish description",
+  "feature": "most distinctive feature",
   "dimensions": {
     "height": ${dimensions.height},
     "width": ${dimensions.width},
     "depth": ${dimensions.depth},
     "seatHeight": ${dimensions.seatHeight || null}
   },
-  "weight": <peso estimado en kg>,
+  "weight": estimated_weight_in_kg,
   "annotations": [
-    "<anotación sobre material/union en español>",
-    "<anotación sobre textura/acabado en español>",
-    "<anotación sobre detalle funcional en español>"
+    "annotation about material/joinery",
+    "annotation about texture/finish",
+    "annotation about functional detail"
   ],
   "colorPalette": {
-    "primary": "<hex del color principal del material>",
-    "primaryName": "<nombre del color en español>",
-    "secondary": "<hex del color secundario>",
-    "secondaryName": "<nombre del color secundario en español>",
+    "primary": "#hex of main material color",
+    "primaryName": "color name",
+    "secondary": "#hex of secondary color",
+    "secondaryName": "color name",
     "pearlGray": "#E5E5E5",
     "darkGray": "#4A4A4A"
   },
   "brand": "${brand}",
-  "productName": "<nombre sugerido del producto en español>",
-  "renderViews": ["frontal", "lateral", "superior", "perspectiva"]
+  "productName": "suggested product name",
+  "renderViews": ["front", "side", "top", "perspective"]
 }
 
-Usa las dimensiones proporcionadas por el usuario exactamente. Estima el peso basándote en el material y tamaño. Extrae los colores de la imagen. Todo en español.`,
+Use the user-provided dimensions exactly. Estimate weight based on material and size. Extract colors from the image.`,
             },
           ],
         },
       ],
-      max_completion_tokens: 2000,
+      max_completion_tokens: 2048,
     });
 
-    // Parse the response — handle multiple VLM output formats
     const content = analysis.choices[0]?.message?.content || "";
-    console.log("[analyze-photo] VLM raw response length:", content.length);
-
     let data;
     try {
       data = JSON.parse(content);
     } catch {
-      // Try markdown code block first: ```json ... ``` or ``` ... ```
-      const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (codeBlockMatch) {
-        try {
-          const cleaned = codeBlockMatch[1].trim().replace(/,\s*([}\]])/g, "$1");
-          data = JSON.parse(cleaned);
-        } catch {
-          // Code block content wasn't valid JSON either, fall through
-        }
-      }
-
-      if (!data) {
-        // Try to extract raw JSON object from the text
+      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        data = JSON.parse(jsonMatch[1].trim());
+      } else {
         const objMatch = content.match(/\{[\s\S]*\}/);
         if (objMatch) {
-          try {
-            const cleaned = objMatch[0].replace(/,\s*([}\]])/g, "$1");
-            data = JSON.parse(cleaned);
-          } catch {
-            console.error("[analyze-photo] Failed to parse extracted JSON. Raw:", content.slice(0, 800));
-            throw new Error(
-              `Could not parse AI response as JSON. Raw VLM output (first 500 chars): ${content.slice(0, 500)}`
-            );
-          }
+          data = JSON.parse(objMatch[0]);
         } else {
-          console.error("[analyze-photo] No JSON found in VLM response. Raw:", content.slice(0, 800));
-          throw new Error(
-            `No JSON object found in AI response. Raw VLM output (first 500 chars): ${content.slice(0, 500)}`
-          );
+          throw new Error("Could not parse AI response as JSON");
         }
       }
     }
@@ -122,8 +90,7 @@ Usa las dimensiones proporcionadas por el usuario exactamente. Estima el peso ba
     return NextResponse.json({ data });
   } catch (error: unknown) {
     console.error("Error analyzing photo:", error);
-    const message =
-      error instanceof Error ? error.message : "Error analyzing photo";
+    const message = error instanceof Error ? error.message : "Error analyzing photo";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
