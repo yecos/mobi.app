@@ -19,11 +19,11 @@ export async function POST(request: NextRequest) {
           role: "user",
           content: [
             {
-              type: "image_url",
+              type: "image_url" as const,
               image_url: { url: image },
             },
             {
-              type: "text",
+              type: "text" as const,
               text: `Analyze this furniture image. The real dimensions provided by the user are: Width: ${dimensions.width}cm, Height: ${dimensions.height}cm, Depth: ${dimensions.depth}cm${dimensions.seatHeight ? `, Seat height: ${dimensions.seatHeight}cm` : ""}. Brand: ${brand}.
 
 Return ONLY a valid JSON object with this exact structure:
@@ -63,9 +63,9 @@ Return ONLY a valid JSON object with this exact structure:
 
 Use the user-provided dimensions exactly. Estimate weight based on material and size. Extract colors from the image.`,
             },
-          ],
+          ] as any,
         },
-      ],
+      ] as any,
     });
 
     // Parse the response
