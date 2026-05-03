@@ -108,12 +108,12 @@ The result should be a clean visual template — the structural design without a
 Same 1200 x 1600 pixels, pearl gray background (#E5E5E5).`;
     }
 
-    // Generate image with DALL-E 3
+    // Generate image with GPT-4o (native image generation)
     const response = await openai.images.generate({
-      model: "dall-e-3",
+      model: "gpt-4o",
       prompt,
-      size: "1024x1792", // portrait, closest to 1200x1600
-      quality: "hd",
+      size: "1024x1536", // portrait, closest to 1200x1600 (3:4 ratio)
+      quality: "high",
       response_format: "b64_json",
     });
 
