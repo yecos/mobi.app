@@ -12,8 +12,9 @@ interface FichaCanvasProps {
  * positions where text was detected by OCR.
  *
  * Each input is a white box with black text, positioned exactly over
- * the original text bounding box. The font size is scaled from the
- * original image coordinates to the displayed size using a ResizeObserver.
+ * the original text bounding box. Font size is calculated to fill the
+ * bounding box height (lineHeight: 1), so the text visually matches
+ * the original text size.
  */
 export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) {
   const uploadedImage = useMobiStore((s) => s.uploadedImage);
@@ -26,12 +27,15 @@ export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) 
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const observer = new ResizeObserver((entries) => {
-      setContainerWidth(entries[0].contentRect.width);
+      const { width, height } = entries[0].contentRect;
+      setContainerWidth(width);
+      setContainerHeight(height);
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -46,12 +50,11 @@ export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) 
   }
 
   const { imageWidth, imageHeight } = detectionResult;
-  const scaleFactor = containerWidth > 0 ? containerWidth / imageWidth : 1;
 
   return (
     <div
       ref={containerRef}
-      className="ficha-canvas-container relative w-full overflow-hidden bg-muted/20 rounded-lg select-none"
+      className="ficha-canvas-container relative w-full overflow-visible bg-muted/20 rounded-lg select-none"
       style={{
         transform: `scale(${scale / 100})`,
         transformOrigin: "top center",
@@ -68,7 +71,10 @@ export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) 
         <TextRegionInput
           key={region.id}
           region={region}
-          scaleFactor={scaleFactor}
+          containerWidth={containerWidth}
+          containerHeight={containerHeight}
+          imageWidth={imageWidth}
+          imageHeight={imageHeight}
           isActive={activeFieldId === region.id}
           inlineEditing={inlineEditing}
           onUpdate={(updates) => updateRegion(region.id, updates)}
@@ -81,58 +87,78 @@ export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) 
 
 function TextRegionInput({
   region,
-  scaleFactor,
+  containerWidth,
+  containerHeight,
+  imageWidth,
+  imageHeight,
   isActive,
   inlineEditing,
   onUpdate,
   onActivate,
 }: {
   region: TextRegion;
-  scaleFactor: number;
+  containerWidth: number;
+  containerHeight: number;
+  imageWidth: number;
+  imageHeight: number;
   isActive: boolean;
   inlineEditing: boolean;
   onUpdate: (updates: Partial<TextRegion>) => void;
   onActivate: () => void;
 }) {
-  // Scale the OCR fontSize (in original image pixels) to the displayed size
-  const displayFontSize = region.fontSize * scaleFactor;
+  // Calculate the scale factor from original image to displayed size
+  const scaleFactorX = containerWidth > 0 ? containerWidth / imageWidth : 1;
+  const scaleFactorY = containerHeight > 0 ? containerHeight / imageHeight : 1;
 
-  // The bounding box from OCR, positioned via percentages over the image
-  const containerStyle: React.CSSProperties = {
+  // Convert OCR percentage coordinates to display pixels
+  const displayX = (region.x / 100) * containerWidth;
+  const displayY = (region.y / 100) * containerHeight;
+  const displayW = (region.w / 100) * containerWidth;
+  const displayH = (region.h / 100) * containerHeight;
+
+  // Font size: use the bounding box height directly.
+  // With lineHeight: 1, the text fills the full box height,
+  // matching the original text size in the image.
+  const displayFontSize = displayH;
+
+  // Container div: positioned exactly at the OCR bounding box
+  const boxStyle: React.CSSProperties = {
     position: "absolute",
-    left: `${region.x}%`,
-    top: `${region.y}%`,
-    width: `${region.w}%`,
-    height: `${region.h}%`,
+    left: `${displayX}px`,
+    top: `${displayY}px`,
+    width: `${displayW}px`,
+    height: `${displayH}px`,
     backgroundColor: "#FFFFFF",
     overflow: "hidden",
+    cursor: "text",
+    boxSizing: "border-box",
   };
 
-  // The input style: fills the entire bounding box, black text on white bg
-  const inputStyle: React.CSSProperties = {
-    width: "100%",
-    height: "100%",
+  // Text style shared between input and display
+  const textStyle: React.CSSProperties = {
     fontSize: `${displayFontSize}px`,
+    lineHeight: "1",
     fontWeight: region.bold ? "bold" : "normal",
     color: "#000000",
-    backgroundColor: "transparent",
-    border: "none",
-    outline: "none",
+    fontFamily: "Arial, Helvetica, sans-serif",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
     padding: "0",
     margin: "0",
-    lineHeight: "1.15",
-    fontFamily: "sans-serif",
-    // Vertically center the text within the bounding box
-    display: "flex",
-    alignItems: "center",
-    paddingLeft: "1px",
+    border: "none",
+    outline: "none",
+    boxSizing: "border-box",
   };
 
   if (isActive || inlineEditing) {
     return (
       <div
-        style={containerStyle}
-        className={isActive ? "ring-2 ring-blue-500/80 z-10" : "hover:ring-1 hover:ring-blue-400/40 z-[5]"}
+        style={{
+          ...boxStyle,
+          zIndex: isActive ? 10 : 5,
+          outline: isActive ? "2px solid rgba(59,130,246,0.8)" : "none",
+        }}
         onClick={(e) => { e.stopPropagation(); onActivate(); }}
       >
         <input
@@ -140,7 +166,16 @@ function TextRegionInput({
           value={region.text}
           onChange={(e) => onUpdate({ text: e.target.value })}
           onClick={(e) => e.stopPropagation()}
-          style={inputStyle}
+          style={{
+            ...textStyle,
+            width: "100%",
+            height: "100%",
+            backgroundColor: "transparent",
+            display: "block",
+            // Remove default input styling that causes offset
+            WebkitAppearance: "none" as React.CSSProperties["WebkitAppearance"],
+            appearance: "none",
+          }}
           autoFocus={isActive}
         />
       </div>
@@ -149,26 +184,13 @@ function TextRegionInput({
 
   return (
     <div
-      style={containerStyle}
-      className="cursor-pointer hover:ring-1 hover:ring-blue-400/40"
+      style={boxStyle}
+      className="hover:outline hover:outline-1 hover:outline-blue-400/40"
       onClick={(e) => { e.stopPropagation(); onActivate(); }}
     >
-      <span
-        style={{
-          ...inputStyle,
-          display: "inline-block",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          verticalAlign: "middle",
-          lineHeight: `${displayFontSize * 1.15}px`,
-          height: "100%",
-          boxSizing: "border-box",
-          paddingLeft: "1px",
-        }}
-      >
+      <div style={textStyle}>
         {region.text}
-      </span>
+      </div>
     </div>
   );
 }

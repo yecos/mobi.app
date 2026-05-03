@@ -250,9 +250,9 @@ export async function detectText(
       return aTop - bTop;
     });
 
-  // Padding to add around bounding boxes (in pixels of original image)
-  // This ensures the white background fully covers the text including anti-aliasing
-  const pad = Math.max(2, Math.round(imgH * 0.003));
+  // Minimal padding around bounding boxes (in pixels of original image)
+  // Just enough to cover anti-aliasing, not too much to avoid misalignment
+  const pad = Math.max(1, Math.round(imgH * 0.002));
 
   for (const line of sortedLines) {
     // Sort words left-to-right within line
@@ -277,12 +277,10 @@ export async function detectText(
 
     if (lineH < 5 || lineW < 5) continue;
 
-    // Font size estimation:
-    // The OCR bounding box height includes ascenders + descenders + padding.
-    // For most fonts, the em-square (font-size) ≈ bbox height / 1.15
-    // We use the padded height for the box but the raw height for fontSize
-    const rawH = y1 - y0;
-    const estimatedFontSize = Math.max(8, Math.round(rawH * 0.88));
+    // Font size: store the padded bounding box height.
+    // The canvas component uses this directly as the display fontSize
+    // with lineHeight: 1, so the text fills the white box exactly.
+    const estimatedFontSize = Math.max(8, Math.round(lineH));
 
     const region: TextRegion = {
       id: `text-${regions.length + 1}`,
@@ -340,7 +338,7 @@ function fallbackFromText(
 
     const estimatedY = (i + 1) * lineHeight;
     const estimatedH = lineHeight * 0.7;
-    const estimatedFontSize = Math.max(8, Math.round(estimatedH * 0.88));
+    const estimatedFontSize = Math.max(8, Math.round(estimatedH));
     const estimatedW = Math.min(imgW * 0.9, text.length * estimatedFontSize * 0.55);
 
     const region: TextRegion = {

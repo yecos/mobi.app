@@ -47,14 +47,12 @@ export default function ExportPhase() {
       ctx.fillStyle = "#FFFFFF";
       ctx.fillRect(x, y, w, h);
 
-      // Black text vertically centered in the bounding box
+      // Black text — fontSize = bounding box height, rendered from top
       const isBold = region.bold ? "bold " : "";
-      ctx.font = `${isBold}${region.fontSize}px sans-serif`;
+      ctx.font = `${isBold}${region.fontSize}px Arial, sans-serif`;
       ctx.fillStyle = "#000000";
-      ctx.textBaseline = "middle";
-      // Draw text at the vertical center of the box
-      const textY = y + h / 2;
-      ctx.fillText(region.text, x + 1, textY);
+      ctx.textBaseline = "top";
+      ctx.fillText(region.text, x + 1, y + 1);
     }
 
     return canvas;
