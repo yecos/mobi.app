@@ -113,14 +113,14 @@ Same 1200 x 1600 pixels, pearl gray background (#E5E5E5).`;
       model: "gpt-image-1",
       prompt,
       size: "1024x1536", // portrait, closest to 1200x1600
-      quality: "high",
-      response_format: "b64_json",
     });
 
     const imageData = response.data?.[0]?.b64_json;
     if (!imageData) {
       throw new Error("No image generated");
     }
+
+    // gpt-image-1 returns base64 by default
 
     return NextResponse.json({
       image: `data:image/png;base64,${imageData}`,
