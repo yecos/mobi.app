@@ -619,17 +619,33 @@ function ManualMode() {
     }
 
     try {
-      // Parse JS/JSON data
+      // Parse JS/JSON data — supports multiple formats
       let parsed: FurnitureData;
-      const jsStr = manualJsData.trim();
+      let jsStr = manualJsData.trim();
 
-      // Try to extract JSON if it's a JS variable declaration
+      // Remove JS single-line comments
+      jsStr = jsStr.replace(/\/\/.*$/gm, "");
+      // Remove JS multi-line comments
+      jsStr = jsStr.replace(/\/\*[\s\S]*?\*\//g, "");
+      // Remove variable declarations: const data = , let x = , var foo =
+      jsStr = jsStr.replace(/^(?:const|let|var)\s+\w+\s*=\s*/m, "");
+      // Remove trailing semicolons
+      jsStr = jsStr.replace(/;\s*$/, "");
+      // Trim again
+      jsStr = jsStr.trim();
+
+      // Extract the JSON object
       const jsonMatch = jsStr.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        throw new Error("No se encontró un objeto JSON válido");
+        throw new Error("No se encontró un objeto JSON válido en el texto");
       }
 
-      parsed = JSON.parse(jsonMatch[0]);
+      let jsonStr = jsonMatch[0];
+
+      // Remove trailing commas before } or ] (invalid in strict JSON)
+      jsonStr = jsonStr.replace(/,\s*([}\]])/g, "$1");
+
+      parsed = JSON.parse(jsonStr);
 
       // Validate minimum required fields
       if (!parsed.productType) {
