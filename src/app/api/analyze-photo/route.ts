@@ -70,20 +70,42 @@ Use the user-provided dimensions exactly. Estimate weight based on material and 
     });
 
     const content = analysis.choices[0]?.message?.content || "";
+    console.log("[analyze-photo] VLM response length:", content.length);
+    console.log("[analyze-photo] Finish reason:", analysis.choices[0]?.finish_reason);
+
     let data;
     try {
       data = JSON.parse(content);
     } catch {
-      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) {
-        data = JSON.parse(jsonMatch[1].trim());
-      } else {
-        const objMatch = content.match(/\{[\s\S]*\}/);
-        if (objMatch) {
-          data = JSON.parse(objMatch[0]);
-        } else {
-          throw new Error("Could not parse AI response as JSON");
+      // Try markdown code block
+      const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) {
+        try {
+          data = JSON.parse(codeBlockMatch[1].trim().replace(/,\s*([}\]])/g, "$1"));
+        } catch {}
+      }
+      if (!data) {
+        // Extract JSON object with balanced braces
+        const firstBrace = content.indexOf("{");
+        if (firstBrace !== -1) {
+          let depth = 0;
+          let lastValidEnd = -1;
+          for (let i = firstBrace; i < content.length; i++) {
+            if (content[i] === "{") depth++;
+            else if (content[i] === "}") {
+              depth--;
+              if (depth === 0) { lastValidEnd = i + 1; break; }
+            }
+          }
+          if (lastValidEnd > firstBrace) {
+            const extracted = content.slice(firstBrace, lastValidEnd).replace(/,\s*([}\]])/g, "$1");
+            try { data = JSON.parse(extracted); } catch {}
+          }
         }
+      }
+      if (!data) {
+        console.error("[analyze-photo] Failed to parse. Raw (first 500):", content.slice(0, 500));
+        throw new Error("Could not parse AI response as JSON");
       }
     }
 

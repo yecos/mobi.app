@@ -82,6 +82,87 @@ async function overlayGrid(imageBase64: string): Promise<string> {
   return `data:image/png;base64,${resultBuffer.toString("base64")}`;
 }
 
+/**
+ * Ultra-robust JSON parser that handles all VLM output formats.
+ * - Direct JSON
+ * - Markdown code blocks (```json ... ``` or ``` ... ```)
+ * - JSON with trailing commas
+ * - Partial/truncated JSON (attempts to fix)
+ * - JSON embedded in text
+ */
+function robustJSONParse(raw: string): unknown {
+  const cleaned = raw.trim();
+
+  // 1. Try direct parse
+  try {
+    return JSON.parse(cleaned);
+  } catch {}
+
+  // 2. Try extracting from markdown code block
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    const blockContent = codeBlockMatch[1].trim();
+    // Remove trailing commas
+    const noTrailing = blockContent.replace(/,\s*([}\]])/g, "$1");
+    try {
+      return JSON.parse(noTrailing);
+    } catch {}
+  }
+
+  // 3. Extract JSON object with balanced braces
+  const firstBrace = cleaned.indexOf("{");
+  if (firstBrace !== -1) {
+    let depth = 0;
+    let lastValidEnd = -1;
+    for (let i = firstBrace; i < cleaned.length; i++) {
+      if (cleaned[i] === "{") depth++;
+      else if (cleaned[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          lastValidEnd = i + 1;
+          break;
+        }
+      }
+    }
+
+    if (lastValidEnd > firstBrace) {
+      const extracted = cleaned.slice(firstBrace, lastValidEnd);
+      // Remove trailing commas
+      const noTrailing = extracted.replace(/,\s*([}\]])/g, "$1");
+      try {
+        return JSON.parse(noTrailing);
+      } catch {}
+    }
+
+    // 4. If truncated (no closing brace found), try to fix
+    if (lastValidEnd === -1) {
+      const partial = cleaned.slice(firstBrace);
+      // Remove trailing commas
+      const noTrailing = partial.replace(/,\s*([}\]])/g, "$1");
+      // Try to close the JSON by adding missing braces/brackets
+      let fixed = noTrailing.trimEnd();
+      // Remove any trailing incomplete entries (partial key-value or array item)
+      fixed = fixed.replace(/,\s*"[^"]*"?\s*$/, "");
+      fixed = fixed.replace(/,\s*$/, "");
+      // Count open brackets
+      const openBraces = (fixed.match(/{/g) || []).length;
+      const closeBraces = (fixed.match(/}/g) || []).length;
+      const openBrackets = (fixed.match(/\[/g) || []).length;
+      const closeBrackets = (fixed.match(/]/g) || []).length;
+      // Close missing brackets first, then braces
+      for (let i = 0; i < openBrackets - closeBrackets; i++) fixed += "]";
+      for (let i = 0; i < openBraces - closeBraces; i++) fixed += "}";
+      try {
+        return JSON.parse(fixed);
+      } catch {}
+    }
+  }
+
+  throw new Error(
+    `Could not parse JSON. Raw response (first 800 chars): ${cleaned.slice(0, 800)}`
+  );
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -104,270 +185,49 @@ export async function POST(request: NextRequest) {
 
     const openai = getOpenAI();
 
-    const prompt = `You are a precise layout detector. This image has a 16-column × 24-row grid overlaid on a furniture technical sheet (ficha técnica).
+    // Simplified prompt — shorter to avoid truncation
+    const prompt = `Analyze this furniture technical sheet (ficha técnica) with a 16×24 grid overlay (columns A-P, rows 1-24).
 
-GRID SYSTEM:
-- Columns: A through P (16 columns)
-- Rows: 1 through 24 (24 rows)
-- Each cell is identified like "B3", "H12", etc.
-- A range of cells is written like "B2:D2" (spanning columns B-D on row 2)
+Find every text element and report its grid cell position.
 
-YOUR TASK:
-1. Identify the background color of the sheet (the main fill color behind all content)
-2. Find EVERY piece of text, number, or label on the sheet
-3. For each one, report which grid cell(s) it occupies
-
-The furniture data that was used to generate this sheet:
-${JSON.stringify(furnitureData, null, 2)}
-
-Return ONLY a valid JSON object with this exact structure:
+Return ONLY valid JSON (no markdown, no explanation):
 {
-  "sheetBgColor": "#hex",
+  "sheetBgColor": "#hex of background",
   "fields": [
-    {
-      "id": "brand",
-      "cells": "A1:C1",
-      "text": "VIVA MOBILI",
-      "fontSize": 3,
-      "type": "text",
-      "editable": true
-    },
-    {
-      "id": "sheetTitle",
-      "cells": "N1:P1",
-      "text": "FICHA TÉCNICA",
-      "fontSize": 2,
-      "type": "text",
-      "editable": true
-    },
-    {
-      "id": "productName",
-      "cells": "A2:F2",
-      "text": "Product name here",
-      "fontSize": 2,
-      "type": "text",
-      "editable": true
-    },
-    {
-      "id": "f-productType",
-      "cells": "A8:C8",
-      "text": "Chair",
-      "fontSize": 1,
-      "type": "text",
-      "editable": true
-    },
-    {
-      "id": "l-productType",
-      "cells": "A7:C7",
-      "text": "TIPO / TYPE",
-      "fontSize": 1,
-      "type": "label",
-      "editable": false
-    },
-    {
-      "id": "f-style",
-      "cells": "A10:C10",
-      "text": "Scandinavian",
-      "fontSize": 1,
-      "type": "text",
-      "editable": true
-    },
-    {
-      "id": "l-style",
-      "cells": "A9:C9",
-      "text": "ESTILO / STYLE",
-      "fontSize": 1,
-      "type": "label",
-      "editable": false
-    },
-    {
-      "id": "f-material",
-      "cells": "A12:D12",
-      "text": "Oak wood",
-      "fontSize": 1,
-      "type": "text",
-      "editable": true
-    },
-    {
-      "id": "l-material",
-      "cells": "A11:D11",
-      "text": "MATERIAL",
-      "fontSize": 1,
-      "type": "label",
-      "editable": false
-    },
-    {
-      "id": "f-finish",
-      "cells": "A14:D14",
-      "text": "Natural lacquer",
-      "fontSize": 1,
-      "type": "text",
-      "editable": true
-    },
-    {
-      "id": "l-finish",
-      "cells": "A13:D13",
-      "text": "ACABADO / FINISH",
-      "fontSize": 1,
-      "type": "label",
-      "editable": false
-    },
-    {
-      "id": "f-feature",
-      "cells": "A16:E16",
-      "text": "Ergonomic design",
-      "fontSize": 1,
-      "type": "text",
-      "editable": true
-    },
-    {
-      "id": "l-feature",
-      "cells": "A15:E15",
-      "text": "CARACTERÍSTICA",
-      "fontSize": 1,
-      "type": "label",
-      "editable": false
-    },
-    {
-      "id": "f-width",
-      "cells": "K8:M8",
-      "text": "130",
-      "fontSize": 1,
-      "type": "number",
-      "editable": true
-    },
-    {
-      "id": "l-width",
-      "cells": "K7:M7",
-      "text": "ANCHO / WIDTH",
-      "fontSize": 1,
-      "type": "label",
-      "editable": false
-    },
-    {
-      "id": "f-height",
-      "cells": "K10:M10",
-      "text": "75",
-      "fontSize": 1,
-      "type": "number",
-      "editable": true
-    },
-    {
-      "id": "l-height",
-      "cells": "K9:M9",
-      "text": "ALTO / HEIGHT",
-      "fontSize": 1,
-      "type": "label",
-      "editable": false
-    },
-    {
-      "id": "f-depth",
-      "cells": "K12:M12",
-      "text": "55",
-      "fontSize": 1,
-      "type": "number",
-      "editable": true
-    },
-    {
-      "id": "l-depth",
-      "cells": "K11:M11",
-      "text": "PROF. / DEPTH",
-      "fontSize": 1,
-      "type": "label",
-      "editable": false
-    },
-    {
-      "id": "f-seatHeight",
-      "cells": "K14:M14",
-      "text": "45",
-      "fontSize": 1,
-      "type": "number",
-      "editable": true
-    },
-    {
-      "id": "l-seatHeight",
-      "cells": "K13:M13",
-      "text": "ALT. ASIENTO",
-      "fontSize": 1,
-      "type": "label",
-      "editable": false
-    },
-    {
-      "id": "f-weight",
-      "cells": "K16:M16",
-      "text": "8",
-      "fontSize": 1,
-      "type": "number",
-      "editable": true
-    },
-    {
-      "id": "l-weight",
-      "cells": "K15:M15",
-      "text": "PESO / WEIGHT",
-      "fontSize": 1,
-      "type": "label",
-      "editable": false
-    },
-    {
-      "id": "ann-1",
-      "cells": "A20:H20",
-      "text": "Solid oak joinery",
-      "fontSize": 1,
-      "type": "text",
-      "editable": true
-    },
-    {
-      "id": "ann-2",
-      "cells": "A21:H21",
-      "text": "Natural grain texture",
-      "fontSize": 1,
-      "type": "text",
-      "editable": true
-    },
-    {
-      "id": "ann-3",
-      "cells": "A22:H22",
-      "text": "Stackable design",
-      "fontSize": 1,
-      "type": "text",
-      "editable": true
-    },
-    {
-      "id": "pal-1",
-      "cells": "A24:B24",
-      "text": "#8B6914",
-      "fontSize": 1,
-      "type": "color",
-      "editable": true
-    },
-    {
-      "id": "pal-2",
-      "cells": "C24:D24",
-      "text": "#D4C5A9",
-      "fontSize": 1,
-      "type": "color",
-      "editable": true
-    }
+    {"id": "brand", "cells": "A1:C1", "text": "visible text", "fontSize": 3, "type": "text", "editable": true},
+    {"id": "sheetTitle", "cells": "N1:P1", "text": "...", "fontSize": 2, "type": "text", "editable": true},
+    {"id": "productName", "cells": "A2:F2", "text": "...", "fontSize": 2, "type": "text", "editable": true},
+    {"id": "f-productType", "cells": "...", "text": "...", "fontSize": 1, "type": "text", "editable": true},
+    {"id": "l-productType", "cells": "...", "text": "...", "fontSize": 1, "type": "label", "editable": false},
+    {"id": "f-style", "cells": "...", "text": "...", "fontSize": 1, "type": "text", "editable": true},
+    {"id": "f-material", "cells": "...", "text": "...", "fontSize": 1, "type": "text", "editable": true},
+    {"id": "f-finish", "cells": "...", "text": "...", "fontSize": 1, "type": "text", "editable": true},
+    {"id": "f-feature", "cells": "...", "text": "...", "fontSize": 1, "type": "text", "editable": true},
+    {"id": "f-width", "cells": "...", "text": "...", "fontSize": 1, "type": "number", "editable": true},
+    {"id": "f-height", "cells": "...", "text": "...", "fontSize": 1, "type": "number", "editable": true},
+    {"id": "f-depth", "cells": "...", "text": "...", "fontSize": 1, "type": "number", "editable": true},
+    {"id": "f-weight", "cells": "...", "text": "...", "fontSize": 1, "type": "number", "editable": true},
+    {"id": "ann-1", "cells": "...", "text": "...", "fontSize": 1, "type": "text", "editable": true},
+    {"id": "ann-2", "cells": "...", "text": "...", "fontSize": 1, "type": "text", "editable": true},
+    {"id": "ann-3", "cells": "...", "text": "...", "fontSize": 1, "type": "text", "editable": true}
   ]
 }
 
-CRITICAL RULES:
-- fontSize: 1 = small (specs/labels), 2 = medium (section headers), 3 = large (main title/brand)
-- Include ALL visible text, numbers, and labels
-- Use the cell range to show the FULL span of each text element
-- For the "text" field, write exactly what you see in the image
-- The "id" must follow the pattern shown above (brand, sheetTitle, productName, f-XXX for values, l-XXX for labels, ann-N for annotations, pal-N for palette colors)
-- "editable" is true for values and brand/title/name, false for labels
-- sheetBgColor must be the hex color of the main background behind the content
-- Be thorough — every single piece of text on the sheet must have an entry
-- Return ONLY the JSON, no markdown, no explanation`;
+Rules:
+- fontSize: 1=small, 2=medium, 3=large
+- type: "text" for values, "number" for dimensions/weight, "label" for field labels, "color" for palette
+- editable: true for values, false for labels
+- cells: grid range like "A1:C1" or single "B3"
+- id pattern: brand, sheetTitle, productName, f-XXX (values), l-XXX (labels), ann-N (annotations), pal-N (palette)
+- Include ALL visible text on the sheet
+- Find as many fields as possible but quality over quantity`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-5-mini",
       messages: [
         {
           role: "system",
-          content: "You are a precise layout detection AI. You analyze images with grid overlays and return exact cell positions for every text element. You always return valid JSON.",
+          content: "You are a layout detection AI. You analyze images with grid overlays and return field positions as JSON. You ALWAYS return valid JSON, never markdown.",
         },
         {
           role: "user",
@@ -387,28 +247,24 @@ CRITICAL RULES:
     });
 
     const content = completion.choices[0]?.message?.content || "";
+    console.log("[detect-positions] VLM response length:", content.length);
+    console.log("[detect-positions] VLM first 300 chars:", content.slice(0, 300));
+    console.log("[detect-positions] VLM last 200 chars:", content.slice(-200));
+    console.log("[detect-positions] Finish reason:", completion.choices[0]?.finish_reason);
 
-    let result: DetectPositionsResult;
-    try {
-      result = JSON.parse(content);
-    } catch {
-      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) {
-        result = JSON.parse(jsonMatch[1].trim());
-      } else {
-        const objMatch = content.match(/\{[\s\S]*\}/);
-        if (objMatch) {
-          result = JSON.parse(objMatch[0]);
-        } else {
-          throw new Error("Could not parse position detection response as JSON");
-        }
-      }
+    // Parse with ultra-robust parser
+    const parsed = robustJSONParse(content) as DetectPositionsResult;
+
+    if (!parsed.fields || !Array.isArray(parsed.fields)) {
+      throw new Error(
+        `Parsed JSON has no fields array. Got keys: ${Object.keys(parsed).join(", ")}. Raw (first 500): ${content.slice(0, 500)}`
+      );
     }
 
     const cellW = imgW / GRID_COLS;
     const cellH = imgH / GRID_ROWS;
 
-    const enhancedFields = (result.fields || []).map((field: DetectedField) => {
+    const enhancedFields = (parsed.fields || []).map((field: DetectedField) => {
       const pixels = cellsToPixels(field.cells, cellW, cellH);
       return {
         ...field,
@@ -419,16 +275,18 @@ CRITICAL RULES:
       };
     });
 
+    console.log("[detect-positions] Successfully detected", enhancedFields.length, "fields");
+
     return NextResponse.json({
       result: {
-        sheetBgColor: result.sheetBgColor || "#E5E5E5",
+        sheetBgColor: parsed.sheetBgColor || "#E5E5E5",
         fields: enhancedFields,
         imageWidth: imgW,
         imageHeight: imgH,
       },
     });
   } catch (error: unknown) {
-    console.error("Error detecting positions:", error);
+    console.error("[detect-positions] ERROR:", error);
     const message = error instanceof Error ? error.message : "Error detecting positions";
     return NextResponse.json({ error: message }, { status: 500 });
   }
