@@ -9,12 +9,11 @@ interface FichaCanvasProps {
 
 /**
  * Renders the uploaded image with overlaid input fields at the exact
- * positions where text was detected. Font sizes are computed by scaling
- * the original pixel fontSize using a ResizeObserver, ensuring the
- * input text matches the original text size at any zoom level.
+ * positions where text was detected by OCR.
  *
- * Inputs have white background + black text so they clearly cover
- * the original text and are easy to read/edit.
+ * Each input is a white box with black text, positioned exactly over
+ * the original text bounding box. The font size is scaled from the
+ * original image coordinates to the displayed size using a ResizeObserver.
  */
 export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) {
   const uploadedImage = useMobiStore((s) => s.uploadedImage);
@@ -95,31 +94,45 @@ function TextRegionInput({
   onUpdate: (updates: Partial<TextRegion>) => void;
   onActivate: () => void;
 }) {
-  // Scale fontSize to match the displayed image size
-  const displayFontSize = Math.round(region.fontSize * scaleFactor);
+  // Scale the OCR fontSize (in original image pixels) to the displayed size
+  const displayFontSize = region.fontSize * scaleFactor;
 
-  // Position and size match the OCR bounding box exactly (percentages of image)
-  const style: React.CSSProperties = {
+  // The bounding box from OCR, positioned via percentages over the image
+  const containerStyle: React.CSSProperties = {
     position: "absolute",
     left: `${region.x}%`,
     top: `${region.y}%`,
     width: `${region.w}%`,
     height: `${region.h}%`,
+    backgroundColor: "#FFFFFF",
+    overflow: "hidden",
+  };
+
+  // The input style: fills the entire bounding box, black text on white bg
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    height: "100%",
     fontSize: `${displayFontSize}px`,
     fontWeight: region.bold ? "bold" : "normal",
     color: "#000000",
-    lineHeight: "1",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "transparent",
+    border: "none",
+    outline: "none",
+    padding: "0",
+    margin: "0",
+    lineHeight: "1.15",
+    fontFamily: "sans-serif",
+    // Vertically center the text within the bounding box
+    display: "flex",
+    alignItems: "center",
+    paddingLeft: "1px",
   };
 
   if (isActive || inlineEditing) {
     return (
       <div
-        style={style}
-        className={`
-          flex items-center cursor-text transition-all overflow-hidden
-          ${isActive ? "ring-2 ring-blue-500/80 z-10" : "hover:ring-1 hover:ring-blue-400/40 z-[5]"}
-        `}
+        style={containerStyle}
+        className={isActive ? "ring-2 ring-blue-500/80 z-10" : "hover:ring-1 hover:ring-blue-400/40 z-[5]"}
         onClick={(e) => { e.stopPropagation(); onActivate(); }}
       >
         <input
@@ -127,16 +140,7 @@ function TextRegionInput({
           value={region.text}
           onChange={(e) => onUpdate({ text: e.target.value })}
           onClick={(e) => e.stopPropagation()}
-          className="w-full h-full outline-none border-none p-0 m-0"
-          style={{
-            fontSize: "inherit",
-            fontWeight: "inherit",
-            color: "inherit",
-            lineHeight: "inherit",
-            backgroundColor: "inherit",
-            paddingLeft: "1px",
-            paddingRight: "1px",
-          }}
+          style={inputStyle}
           autoFocus={isActive}
         />
       </div>
@@ -145,11 +149,24 @@ function TextRegionInput({
 
   return (
     <div
-      style={style}
-      className="flex items-center cursor-pointer transition-all hover:ring-1 hover:ring-blue-400/40"
+      style={containerStyle}
+      className="cursor-pointer hover:ring-1 hover:ring-blue-400/40"
       onClick={(e) => { e.stopPropagation(); onActivate(); }}
     >
-      <span className="truncate px-[1px]" style={{ fontSize: "inherit", fontWeight: "inherit", color: "inherit", lineHeight: "inherit" }}>
+      <span
+        style={{
+          ...inputStyle,
+          display: "inline-block",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          verticalAlign: "middle",
+          lineHeight: `${displayFontSize * 1.15}px`,
+          height: "100%",
+          boxSizing: "border-box",
+          paddingLeft: "1px",
+        }}
+      >
         {region.text}
       </span>
     </div>

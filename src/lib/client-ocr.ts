@@ -42,6 +42,8 @@ interface TSVWord {
   conf: number;
   text: string;
   lineNum: number;
+  blockNum: number;
+  parNum: number;
 }
 
 function parseTSV(tsv: string): TSVWord[] {
@@ -55,6 +57,8 @@ function parseTSV(tsv: string): TSVWord[] {
     if (cols.length < 12) continue;
 
     const level = parseInt(cols[0], 10);
+    const blockNum = parseInt(cols[2], 10);
+    const parNum = parseInt(cols[3], 10);
     const lineNum = parseInt(cols[4], 10);
     const wordNum = parseInt(cols[5], 10);
     const left = parseInt(cols[6], 10);
@@ -66,7 +70,7 @@ function parseTSV(tsv: string): TSVWord[] {
 
     // Level 5 = word level
     if (level === 5 && wordNum > 0 && text.trim()) {
-      words.push({ level, left, top, width, height, conf, text: text.trim(), lineNum });
+      words.push({ level, left, top, width, height, conf, text: text.trim(), lineNum, blockNum, parNum });
     }
   }
 
@@ -169,6 +173,10 @@ async function getWorker(onProgress?: (percent: number) => void): Promise<Worker
 /**
  * Run OCR on the client using Tesseract.js.
  * Uses TSV output for reliable bounding boxes (avoids v5 empty lines/words bug).
+ *
+ * Bounding boxes are expanded slightly with padding to ensure the white
+ * background overlay fully covers the original text. Font sizes are
+ * estimated from the bounding box height.
  */
 export async function detectText(
   imageDataUrl: string,
@@ -218,13 +226,14 @@ export async function detectText(
     return fallbackFromText(data.text || "", ctx, imgW, imgH, bgColor, onProgress);
   }
 
-  // 6. Group words into lines by lineNum
-  const lineGroups = new Map<number, TSVWord[]>();
+  // 6. Group words into lines by (blockNum, parNum, lineNum) for more accurate grouping
+  const lineGroups = new Map<string, TSVWord[]>();
   for (const w of tsvWords) {
-    if (!lineGroups.has(w.lineNum)) {
-      lineGroups.set(w.lineNum, []);
+    const key = `${w.blockNum}-${w.parNum}-${w.lineNum}`;
+    if (!lineGroups.has(key)) {
+      lineGroups.set(key, []);
     }
-    lineGroups.get(w.lineNum)!.push(w);
+    lineGroups.get(key)!.push(w);
   }
 
   console.log("[OCR] Line groups:", lineGroups.size);
@@ -234,12 +243,16 @@ export async function detectText(
 
   // Sort lines by top position
   const sortedLines = [...lineGroups.entries()]
-    .map(([num, words]) => ({ num, words }))
+    .map(([key, words]) => ({ key, words }))
     .sort((a, b) => {
       const aTop = Math.min(...a.words.map((w) => w.top));
       const bTop = Math.min(...b.words.map((w) => w.top));
       return aTop - bTop;
     });
+
+  // Padding to add around bounding boxes (in pixels of original image)
+  // This ensures the white background fully covers the text including anti-aliasing
+  const pad = Math.max(2, Math.round(imgH * 0.003));
 
   for (const line of sortedLines) {
     // Sort words left-to-right within line
@@ -253,29 +266,43 @@ export async function detectText(
     const x1 = Math.max(...sortedWords.map((w) => w.left + w.width));
     const y1 = Math.max(...sortedWords.map((w) => w.top + w.height));
 
-    const lineW = x1 - x0;
-    const lineH = y1 - y0;
+    // Apply padding (clamped to image bounds)
+    const px0 = Math.max(0, x0 - pad);
+    const py0 = Math.max(0, y0 - pad);
+    const px1 = Math.min(imgW, x1 + pad);
+    const py1 = Math.min(imgH, y1 + pad);
+
+    const lineW = px1 - px0;
+    const lineH = py1 - py0;
 
     if (lineH < 5 || lineW < 5) continue;
 
+    // Font size estimation:
+    // The OCR bounding box height includes ascenders + descenders + padding.
+    // For most fonts, the em-square (font-size) ≈ bbox height / 1.15
+    // We use the padded height for the box but the raw height for fontSize
+    const rawH = y1 - y0;
+    const estimatedFontSize = Math.max(8, Math.round(rawH * 0.88));
+
     const region: TextRegion = {
       id: `text-${regions.length + 1}`,
-      x: parseFloat(((x0 / imgW) * 100).toFixed(2)),
-      y: parseFloat(((y0 / imgH) * 100).toFixed(2)),
-      w: parseFloat(((lineW / imgW) * 100).toFixed(2)),
-      h: parseFloat(((lineH / imgH) * 100).toFixed(2)),
+      // Use 4 decimal places for sub-pixel precision
+      x: parseFloat(((px0 / imgW) * 100).toFixed(4)),
+      y: parseFloat(((py0 / imgH) * 100).toFixed(4)),
+      w: parseFloat(((lineW / imgW) * 100).toFixed(4)),
+      h: parseFloat(((lineH / imgH) * 100).toFixed(4)),
       text,
-      fontSize: Math.round(lineH * 0.85),
-      color: detectTextColor(ctx, x0, y0, lineW, lineH, imgW, imgH),
+      fontSize: estimatedFontSize,
+      color: detectTextColor(ctx, x0, y0, x1 - x0, y1 - y0, imgW, imgH),
       bold: false,
       editable: true,
     };
 
-    // Bold heuristic
+    // Bold heuristic: compare average char width vs expected width
     const charCount = text.replace(/\s/g, "").length;
     if (charCount > 0) {
-      const avgCharWidth = lineW / text.length;
-      const expectedCharWidth = region.fontSize * 0.55;
+      const avgCharWidth = (x1 - x0) / text.length;
+      const expectedCharWidth = estimatedFontSize * 0.55;
       if (avgCharWidth > expectedCharWidth * 1.2) {
         region.bold = true;
       }
@@ -313,16 +340,15 @@ function fallbackFromText(
 
     const estimatedY = (i + 1) * lineHeight;
     const estimatedH = lineHeight * 0.7;
-    // Estimate width based on text length (rough: ~55% of fontSize per char)
-    const estimatedFontSize = Math.round(estimatedH * 0.82);
+    const estimatedFontSize = Math.max(8, Math.round(estimatedH * 0.88));
     const estimatedW = Math.min(imgW * 0.9, text.length * estimatedFontSize * 0.55);
 
     const region: TextRegion = {
       id: `text-${regions.length + 1}`,
-      x: parseFloat(((imgW * 0.05) / imgW * 100).toFixed(2)),
-      y: parseFloat(((estimatedY / imgH) * 100).toFixed(2)),
-      w: parseFloat(((estimatedW / imgW) * 100).toFixed(2)),
-      h: parseFloat(((estimatedH / imgH) * 100).toFixed(2)),
+      x: parseFloat(((imgW * 0.05) / imgW * 100).toFixed(4)),
+      y: parseFloat(((estimatedY / imgH) * 100).toFixed(4)),
+      w: parseFloat(((estimatedW / imgW) * 100).toFixed(4)),
+      h: parseFloat(((estimatedH / imgH) * 100).toFixed(4)),
       text,
       fontSize: estimatedFontSize,
       color: detectTextColor(ctx, imgW * 0.05, estimatedY, estimatedW, estimatedH, imgW, imgH),

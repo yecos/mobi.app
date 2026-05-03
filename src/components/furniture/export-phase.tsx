@@ -35,7 +35,7 @@ export default function ExportPhase() {
     });
     ctx.drawImage(bgImg, 0, 0, imageWidth, imageHeight);
 
-    // Paint over detected regions with white background + black text
+    // Paint over detected regions: white bg covers original text, then draw new black text
     for (const region of editedRegions) {
       const x = (region.x / 100) * imageWidth;
       const y = (region.y / 100) * imageHeight;
@@ -47,12 +47,14 @@ export default function ExportPhase() {
       ctx.fillStyle = "#FFFFFF";
       ctx.fillRect(x, y, w, h);
 
-      // Black text
+      // Black text vertically centered in the bounding box
       const isBold = region.bold ? "bold " : "";
       ctx.font = `${isBold}${region.fontSize}px sans-serif`;
       ctx.fillStyle = "#000000";
-      ctx.textBaseline = "top";
-      ctx.fillText(region.text, x + 1, y + 1);
+      ctx.textBaseline = "middle";
+      // Draw text at the vertical center of the box
+      const textY = y + h / 2;
+      ctx.fillText(region.text, x + 1, textY);
     }
 
     return canvas;
