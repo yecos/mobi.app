@@ -22,6 +22,7 @@ export interface DetectionResult {
   regions: TextRegion[];
   imageWidth: number;   // original image width in px
   imageHeight: number;  // original image height in px
+  bgColor: string;      // detected background color for covering original text
 }
 
 export type AppPhase = "input" | "generating" | "editing" | "export";

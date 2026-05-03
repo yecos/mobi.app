@@ -1,100 +1,117 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOpenAI } from "@/lib/openai";
+import sharp from "sharp";
+import Tesseract from "tesseract.js";
 
 interface TextRegionRaw {
   id: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+  x: number;       // percentage from left
+  y: number;       // percentage from top
+  w: number;       // percentage width
+  h: number;       // percentage height
   text: string;
-  fontSize: number;
+  fontSize: number; // pixel size in original image
   color: string;
   bold: boolean;
   editable: boolean;
 }
 
-interface DetectResult {
-  regions: TextRegionRaw[];
+/**
+ * Detect the dominant text color in a bounding box region.
+ * Samples dark pixels (likely text) and returns their average color.
+ */
+async function detectTextColor(
+  imageBuffer: Buffer,
+  px: number,
+  py: number,
+  pw: number,
+  ph: number,
+  imgW: number,
+  imgH: number
+): Promise<string> {
+  try {
+    const left = Math.max(0, Math.min(imgW - 1, Math.round(px)));
+    const top = Math.max(0, Math.min(imgH - 1, Math.round(py)));
+    const width = Math.max(1, Math.min(imgW - left, Math.round(pw)));
+    const height = Math.max(1, Math.min(imgH - top, Math.round(ph)));
+
+    const { data: pixels, info } = await sharp(imageBuffer)
+      .extract({ left, top, width, height })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    const channels = info.channels;
+    let rSum = 0,
+      gSum = 0,
+      bSum = 0,
+      count = 0;
+
+    for (let p = 0; p < pixels.length; p += channels) {
+      const r = pixels[p];
+      const g = pixels[p + 1];
+      const b = pixels[p + 2];
+      // Perceived luminance
+      const brightness = r * 0.299 + g * 0.587 + b * 0.114;
+      // Darker than mid-gray = likely text
+      if (brightness < 160) {
+        rSum += r;
+        gSum += g;
+        bSum += b;
+        count++;
+      }
+    }
+
+    if (count > 0) {
+      const r = Math.round(rSum / count);
+      const g = Math.round(gSum / count);
+      const b = Math.round(bSum / count);
+      return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+    }
+
+    return "#1a1a1a";
+  } catch {
+    return "#1a1a1a";
+  }
 }
 
 /**
- * Ultra-robust JSON parser that handles all VLM output formats,
- * including truncated responses where the JSON is cut off mid-stream.
+ * Detect background color at a specific point (just above the text line).
  */
-function robustJSONParse(raw: string): unknown {
-  const cleaned = raw.trim();
+async function detectBgColor(
+  imageBuffer: Buffer,
+  imgW: number,
+  imgH: number
+): Promise<string> {
+  try {
+    // Sample the top-left corner area to determine background
+    const size = Math.min(50, imgW, imgH);
+    const { data: pixels, info } = await sharp(imageBuffer)
+      .extract({ left: 0, top: 0, width: size, height: size })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
 
-  // 1. Direct parse
-  try { return JSON.parse(cleaned); } catch {}
+    const channels = info.channels;
+    let rSum = 0,
+      gSum = 0,
+      bSum = 0,
+      count = 0;
 
-  // 2. Markdown code block
-  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (codeBlockMatch) {
-    const blockContent = codeBlockMatch[1].trim().replace(/,\s*([}\]])/g, "$1");
-    try { return JSON.parse(blockContent); } catch {}
+    for (let p = 0; p < pixels.length; p += channels) {
+      rSum += pixels[p];
+      gSum += pixels[p + 1];
+      bSum += pixels[p + 2];
+      count++;
+    }
+
+    if (count > 0) {
+      const r = Math.round(rSum / count);
+      const g = Math.round(gSum / count);
+      const b = Math.round(bSum / count);
+      return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+    }
+    return "#E5E5E5";
+  } catch {
+    return "#E5E5E5";
   }
-
-  // 3. Balanced braces extraction
-  const firstBrace = cleaned.indexOf("{");
-  if (firstBrace !== -1) {
-    let depth = 0;
-    let lastValidEnd = -1;
-    for (let i = firstBrace; i < cleaned.length; i++) {
-      if (cleaned[i] === "{") depth++;
-      else if (cleaned[i] === "}") {
-        depth--;
-        if (depth === 0) { lastValidEnd = i + 1; break; }
-      }
-    }
-    if (lastValidEnd > firstBrace) {
-      const extracted = cleaned.slice(firstBrace, lastValidEnd).replace(/,\s*([}\]])/g, "$1");
-      try { return JSON.parse(extracted); } catch {}
-    }
-
-    // 4. Truncated JSON — sophisticated repair
-    if (lastValidEnd === -1) {
-      const partial = cleaned.slice(firstBrace);
-
-      // Strategy A: Find the last COMPLETE object in the array
-      // Look for the last "}," or "}" pattern that closes an object inside the array
-      const lastCompleteObj = partial.lastIndexOf("}");
-      if (lastCompleteObj > 0) {
-        // Check if there's a comma after it (inside the array) — include the }
-        let truncEnd = lastCompleteObj + 1;
-        const afterClose = partial.slice(truncEnd).trimStart();
-        if (afterClose.startsWith(",")) {
-          truncEnd += afterClose.indexOf(",") + 1;
-        }
-        let fixed = partial.slice(0, truncEnd);
-        // Remove trailing comma before closing bracket
-        fixed = fixed.replace(/,\s*$/, "");
-        // Count open/close brackets
-        const openBraces = (fixed.match(/{/g) || []).length;
-        const closeBraces = (fixed.match(/}/g) || []).length;
-        const openBrackets = (fixed.match(/\[/g) || []).length;
-        const closeBrackets = (fixed.match(/]/g) || []).length;
-        for (let i = 0; i < openBrackets - closeBrackets; i++) fixed += "]";
-        for (let i = 0; i < openBraces - closeBraces; i++) fixed += "}";
-        try { return JSON.parse(fixed); } catch {}
-      }
-
-      // Strategy B: Remove incomplete last entry and close
-      let fixed = partial.trimEnd();
-      // Remove trailing incomplete key-value pair
-      fixed = fixed.replace(/,\s*"[^"]*"?\s*:?\s*$/, "");
-      fixed = fixed.replace(/,\s*$/, "");
-      const openBraces2 = (fixed.match(/{/g) || []).length;
-      const closeBraces2 = (fixed.match(/}/g) || []).length;
-      const openBrackets2 = (fixed.match(/\[/g) || []).length;
-      const closeBrackets2 = (fixed.match(/]/g) || []).length;
-      for (let i = 0; i < openBrackets2 - closeBrackets2; i++) fixed += "]";
-      for (let i = 0; i < openBraces2 - closeBraces2; i++) fixed += "}";
-      try { return JSON.parse(fixed); } catch {}
-    }
-  }
-
-  throw new Error(`Could not parse JSON. Raw response (first 800 chars): ${cleaned.slice(0, 800)}`);
 }
 
 export async function POST(request: NextRequest) {
@@ -110,111 +127,100 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No image provided" }, { status: 400 });
     }
 
-    const openai = getOpenAI();
+    const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+    const imageBuffer = Buffer.from(base64Data, "base64");
 
-    const prompt = `You are a text detection AI. Analyze this image and find ALL text elements.
+    // Get actual image dimensions from Sharp
+    const metadata = await sharp(imageBuffer).metadata();
+    const imgW = metadata.width || imageWidth || 1024;
+    const imgH = metadata.height || imageHeight || 1536;
 
-The image is ${imageWidth}px wide and ${imageHeight}px tall.
+    console.log("[detect-text] Image dimensions:", imgW, "x", imgH);
 
-For EACH text element you find, report:
-- id: unique identifier (e.g. "text-1", "text-2", etc.)
-- x: horizontal position as PERCENTAGE from left edge (0-100)
-- y: vertical position as PERCENTAGE from top edge (0-100)
-- w: width as PERCENTAGE of total image width
-- h: height as PERCENTAGE of total image height
-- text: the exact text content you see
-- fontSize: approximate font size in pixels (relative to ${imageWidth}px image width)
-- color: text color as hex code (e.g. "#1a1a1a")
-- bold: true if text appears bold, false otherwise
-- editable: true for ALL fields (user can edit everything)
+    // ─── PRIMARY: Tesseract.js OCR (precise bounding boxes) ───
+    console.log("[detect-text] Starting Tesseract OCR...");
+    const startTime = Date.now();
 
-IMPORTANT RULES:
-1. Detect EVERY piece of visible text — headers, labels, values, numbers, annotations, brand names, measurements, everything
-2. Be as PRECISE as possible with positioning — x,y should point to the top-left corner of the text bounding box
-3. w,h should tightly wrap the text — not too large, not too small
-4. fontSize should match the visual size of the text in the original image
-5. Group text that belongs together (e.g. "FICHA TÉCNICA" is ONE region, not separate words)
-6. For labels and their values that are close together, keep them as SEPARATE regions (e.g. "Material:" label is one region, "Roble" value is another)
-7. Order regions from top to bottom, left to right
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ocrData = (await Tesseract.recognize(imageBuffer, "spa+eng")).data as any;
+    
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    const ocrLines: Array<{ text: string; bbox: { x0: number; y0: number; x1: number; y1: number } }> =
+      ocrData.lines || [];
+    console.log("[detect-text] Tesseract completed in", elapsed, "s — found", ocrLines.length, "lines");
 
-Return ONLY a valid JSON object with this exact structure:
-{
-  "regions": [
-    {"id": "text-1", "x": 5.0, "y": 2.5, "w": 20.0, "h": 4.0, "text": "BRAND NAME", "fontSize": 28, "color": "#1a1a1a", "bold": true, "editable": true},
-    {"id": "text-2", "x": 75.0, "y": 2.5, "w": 22.0, "h": 4.0, "text": "FICHA TECNICA", "fontSize": 24, "color": "#4A4A4A", "bold": true, "editable": true}
-  ]
-}`;
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a precise text detection AI. You analyze images and return exact positions of all text elements as JSON. You ALWAYS return valid JSON. Never include markdown formatting or explanations.",
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "image_url" as const,
-              image_url: { url: image },
-            },
-            {
-              type: "text" as const,
-              text: prompt,
-            },
-          ],
-        },
-      ],
-      max_completion_tokens: 16384,
-      response_format: { type: "json_object" },
-    });
-
-    const content = completion.choices[0]?.message?.content || "";
-    console.log("[detect-text] VLM response length:", content.length);
-    console.log("[detect-text] VLM first 300 chars:", content.slice(0, 300));
-    console.log("[detect-text] Finish reason:", completion.choices[0]?.finish_reason);
-
-    // Parse with robust parser (response_format: json_object should give valid JSON,
-    // but we keep the fallback for safety)
-    let parsed: DetectResult;
-    try {
-      parsed = JSON.parse(content) as DetectResult;
-    } catch {
-      parsed = robustJSONParse(content) as DetectResult;
+    if (ocrLines.length === 0) {
+      throw new Error("No se detectó texto en la imagen. Intenta con una imagen más clara.");
     }
 
-    if (!parsed.regions || !Array.isArray(parsed.regions)) {
-      throw new Error(
-        `Parsed JSON has no regions array. Got keys: ${Object.keys(parsed).join(", ")}. Raw (first 500): ${content.slice(0, 500)}`
+    // Convert Tesseract lines → TextRegion with pixel-precise positions
+    const regions: TextRegionRaw[] = [];
+
+    for (let i = 0; i < ocrLines.length; i++) {
+      const line = ocrLines[i];
+      const text = (line.text || "").trim();
+
+      if (!text || text.length === 0) continue;
+
+      const bbox = line.bbox; // { x0, y0, x1, y1 } in pixels
+      const lineH = bbox.y1 - bbox.y0;
+      const lineW = bbox.x1 - bbox.x0;
+
+      // Skip very tiny detections (noise)
+      if (lineH < 5 || lineW < 5) continue;
+
+      const region: TextRegionRaw = {
+        id: `text-${regions.length + 1}`,
+        x: parseFloat(((bbox.x0 / imgW) * 100).toFixed(2)),
+        y: parseFloat(((bbox.y0 / imgH) * 100).toFixed(2)),
+        w: parseFloat(((lineW / imgW) * 100).toFixed(2)),
+        h: parseFloat(((lineH / imgH) * 100).toFixed(2)),
+        text,
+        fontSize: Math.round(lineH * 0.82), // approximate font size from bbox height
+        color: "#1a1a1a",
+        bold: false,
+        editable: true,
+      };
+
+      // Bold heuristic: compare actual char width vs expected for normal weight
+      const charCount = text.replace(/\s/g, "").length;
+      if (charCount > 0) {
+        const avgCharWidthPx = lineW / text.length; // include spaces for avg
+        const expectedCharWidth = region.fontSize * 0.55;
+        if (avgCharWidthPx > expectedCharWidth * 1.2) {
+          region.bold = true;
+        }
+      }
+
+      regions.push(region);
+    }
+
+    // Detect text colors using Sharp (batched to avoid overload)
+    console.log("[detect-text] Detecting colors for", regions.length, "regions...");
+    for (let i = 0; i < regions.length; i += 8) {
+      const batch = regions.slice(i, i + 8);
+      await Promise.all(
+        batch.map(async (region) => {
+          const px = (region.x / 100) * imgW;
+          const py = (region.y / 100) * imgH;
+          const pw = (region.w / 100) * imgW;
+          const ph = (region.h / 100) * imgH;
+          region.color = await detectTextColor(imageBuffer, px, py, pw, ph, imgW, imgH);
+        })
       );
     }
 
-    // Validate and clean regions (parsed from JSON, so types are loose)
-    const rawRegions = (parsed.regions as unknown) as Record<string, unknown>[];
-    const regions: TextRegionRaw[] = rawRegions
-      .filter((r) => r.id && typeof r.x === "number" && typeof r.y === "number")
-      .map((r, index) => ({
-        id: (r.id as string) || `text-${index + 1}`,
-        x: Math.max(0, Math.min(100, (r.x as number) || 0)),
-        y: Math.max(0, Math.min(100, (r.y as number) || 0)),
-        w: Math.max(1, (r.w as number) || 5),
-        h: Math.max(1, (r.h as number) || 2),
-        text: String(r.text || ""),
-        fontSize: Math.max(8, (r.fontSize as number) || 14),
-        color: String(r.color || "#1a1a1a"),
-        bold: Boolean(r.bold),
-        editable: true,
-      }));
+    // Detect background color for export use
+    const bgColor = await detectBgColor(imageBuffer, imgW, imgH);
 
-    console.log("[detect-text] Successfully detected", regions.length, "text regions");
+    console.log("[detect-text] Successfully processed", regions.length, "text regions with precise positions");
 
     return NextResponse.json({
       result: {
         regions,
-        imageWidth,
-        imageHeight,
+        imageWidth: imgW,
+        imageHeight: imgH,
+        bgColor,
       },
     });
   } catch (error: unknown) {

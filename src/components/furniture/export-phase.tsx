@@ -18,7 +18,7 @@ export default function ExportPhase() {
   const composeCanvas = useCallback(async (): Promise<HTMLCanvasElement | null> => {
     if (!uploadedImage || !detectionResult || editedRegions.length === 0) return null;
 
-    const { imageWidth, imageHeight } = detectionResult;
+    const { imageWidth, imageHeight, bgColor } = detectionResult;
 
     const canvas = document.createElement("canvas");
     canvas.width = imageWidth;
@@ -45,8 +45,8 @@ export default function ExportPhase() {
 
       if (!region.text) continue;
 
-      // Paint a white/background rect to cover the original text
-      ctx.fillStyle = "#FFFFFF";
+      // Paint background color rect to cover original text
+      ctx.fillStyle = bgColor || "#E5E5E5";
       ctx.fillRect(x, y, w, h);
 
       // Draw the edited text
