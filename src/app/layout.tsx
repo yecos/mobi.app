@@ -15,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Mobili — Visor Técnico de Mobiliario",
+  title: "Mobili — Generador de Fichas Técnicas",
   description:
-    "Visor técnico de mobiliario con vista 3D interactiva, mediciones y especificaciones. Soporta modelos GLB, GLTF y SKP.",
+    "Generador de fichas técnicas para mobiliario con inteligencia artificial. Análisis de imagen, edición y exportación.",
   icons: {
     icon: "/favicon.ico",
   },

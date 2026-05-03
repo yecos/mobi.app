@@ -1,7 +1,7 @@
 "use client";
 
-import MobiViewer from "@/components/furniture/mobi-viewer";
+import MobiApp from "@/components/furniture/mobi-app";
 
 export default function Home() {
-  return <MobiViewer />;
+  return <MobiApp />;
 }

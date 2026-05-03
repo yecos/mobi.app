@@ -1,92 +1,230 @@
 import { create } from "zustand";
 
-export interface Measurement {
-  id: string;
-  start: [number, number, number];
-  end: [number, number, number];
-  distance: number; // in cm
-  label: string;
+// ─── Types ────────────────────────────────────────────
+
+export interface FurnitureDimensions {
+  width: number;
+  height: number;
+  depth: number;
+  seatHeight?: number;
 }
 
-export interface FurnitureSpecs {
-  name?: string;
-  dimensions?: {
-    width: number;
-    depth: number;
-    height: number;
+export interface FurnitureData {
+  productType: string;
+  style: string;
+  material: {
+    main: string;
+    details: string[];
   };
-  materials?: string[];
-  weight?: number;
-  finishes?: { name: string; hex: string }[];
-  [key: string]: unknown;
+  finish: string;
+  feature: string;
+  dimensions: FurnitureDimensions;
+  weight: number;
+  annotations: string[];
+  colorPalette: {
+    primary: string;
+    primaryName: string;
+    secondary: string;
+    secondaryName: string;
+    pearlGray: string;
+    darkGray: string;
+  };
+  brand: string;
+  productName: string;
+  renderViews: string[];
 }
+
+export interface LayoutField {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fontSize: number;
+  fontWeight?: string;
+  align?: "left" | "center" | "right";
+  type: "text" | "number" | "color" | "label";
+  unit?: string;
+  editable: boolean;
+}
+
+export interface FichaLayout {
+  width: number;
+  height: number;
+  brand: LayoutField;
+  sheetTitle: LayoutField;
+  productName: LayoutField;
+  views: { id: string; x: number; y: number; w: number; h: number }[];
+  dimensions: {
+    id: string;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    valueX: number;
+    valueY: number;
+    arrowDir: "h" | "v";
+  }[];
+  fields: LayoutField[];
+  annotations: LayoutField[];
+  palette: {
+    id: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    labelX: number;
+    labelY: number;
+  }[];
+}
+
+export interface ExtraElement {
+  id: string;
+  type: "logo" | "stamp" | "image" | "text";
+  data: string; // base64 for images, text for text
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fontSize?: number;
+}
+
+export type AppPhase = "input" | "generating" | "review" | "editing" | "export";
 
 interface MobiStore {
-  // File upload
-  fileUrl: string | null;
-  fileName: string | null;
-  fileType: "skp" | "glb" | "gltf" | null;
-  setFile: (url: string, name: string, type: "skp" | "glb" | "gltf") => void;
-  clearFile: () => void;
+  // Phase
+  phase: AppPhase;
+  setPhase: (phase: AppPhase) => void;
 
-  // Measurement system
-  measurements: Measurement[];
-  isMeasuring: boolean;
-  firstPoint: [number, number, number] | null;
-  setMeasuring: (measuring: boolean) => void;
-  setFirstPoint: (point: [number, number, number] | null) => void;
-  addMeasurement: (measurement: Measurement) => void;
-  removeMeasurement: (id: string) => void;
-  clearMeasurements: () => void;
+  // Input
+  uploadedImage: string | null; // base64
+  uploadedImageName: string | null;
+  userDimensions: FurnitureDimensions;
+  userBrand: string;
+  userProductName: string;
+  setUploadedImage: (data: string, name: string) => void;
+  setUserDimensions: (dims: Partial<FurnitureDimensions>) => void;
+  setUserBrand: (brand: string) => void;
+  setUserProductName: (name: string) => void;
 
-  // JS Spec editor
-  specCode: string;
-  parsedSpecs: FurnitureSpecs | null;
-  specsError: string | null;
-  setSpecCode: (code: string) => void;
-  setParsedSpecs: (specs: FurnitureSpecs | null) => void;
-  setSpecsError: (error: string | null) => void;
+  // AI Generated
+  furnitureData: FurnitureData | null;
+  referenceImage: string | null; // Image A: ficha completa con texto
+  canvasImage: string | null; // Image B: ficha sin texto
+  fichaLayout: FichaLayout | null;
+  setFurnitureData: (data: FurnitureData) => void;
+  setReferenceImage: (img: string | null) => void;
+  setCanvasImage: (img: string | null) => void;
+  setFichaLayout: (layout: FichaLayout) => void;
+
+  // Editable fields (values the user can modify)
+  editedData: FurnitureData | null;
+  updateField: (path: string, value: unknown) => void;
+
+  // Extras
+  extras: ExtraElement[];
+  addExtra: (extra: ExtraElement) => void;
+  removeExtra: (id: string) => void;
+  updateExtra: (id: string, updates: Partial<ExtraElement>) => void;
+
+  // Generation status
+  generatingStep: string | null;
+  error: string | null;
+  setGeneratingStep: (step: string | null) => void;
+  setError: (error: string | null) => void;
+
+  // Reset
+  reset: () => void;
+}
+
+const defaultDimensions: FurnitureDimensions = {
+  width: 0,
+  height: 0,
+  depth: 0,
+  seatHeight: 0,
+};
+
+const initialState = {
+  phase: "input" as AppPhase,
+  uploadedImage: null as string | null,
+  uploadedImageName: null as string | null,
+  userDimensions: { ...defaultDimensions },
+  userBrand: "VIVA MOBILI",
+  userProductName: "",
+  furnitureData: null as FurnitureData | null,
+  referenceImage: null as string | null,
+  canvasImage: null as string | null,
+  fichaLayout: null as FichaLayout | null,
+  editedData: null as FurnitureData | null,
+  extras: [] as ExtraElement[],
+  generatingStep: null as string | null,
+  error: null as string | null,
+};
+
+/**
+ * Deep-set a value at a dot-separated path inside a nested object.
+ * Returns a new object (immutable).
+ */
+function setPathValue(obj: Record<string, any>, path: string, value: unknown): Record<string, any> {
+  const keys = path.split(".");
+  const result: Record<string, any> = JSON.parse(JSON.stringify(obj));
+  let current: Record<string, unknown> = result as Record<string, unknown>;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (current[keys[i]] === undefined) {
+      current[keys[i]] = {};
+    }
+    current = current[keys[i]];
+  }
+  current[keys[keys.length - 1]] = value;
+  return result;
 }
 
 export const useMobiStore = create<MobiStore>((set) => ({
-  // File upload
-  fileUrl: null,
-  fileName: null,
-  fileType: null,
-  setFile: (url, name, type) =>
-    set({ fileUrl: url, fileName: name, fileType: type }),
-  clearFile: () =>
-    set({ fileUrl: null, fileName: null, fileType: null }),
+  ...initialState,
 
-  // Measurement system
-  measurements: [],
-  isMeasuring: false,
-  firstPoint: null,
-  setMeasuring: (measuring) => set({ isMeasuring: measuring }),
-  setFirstPoint: (point) => set({ firstPoint: point }),
-  addMeasurement: (measurement) =>
-    set((state) => ({ measurements: [...state.measurements, measurement] })),
-  removeMeasurement: (id) =>
+  // Phase
+  setPhase: (phase) => set({ phase }),
+
+  // Input
+  setUploadedImage: (data, name) =>
+    set({ uploadedImage: data, uploadedImageName: name }),
+  setUserDimensions: (dims) =>
     set((state) => ({
-      measurements: state.measurements.filter((m) => m.id !== id),
+      userDimensions: { ...state.userDimensions, ...dims },
     })),
-  clearMeasurements: () =>
-    set({ measurements: [], firstPoint: null, isMeasuring: false }),
+  setUserBrand: (brand) => set({ userBrand: brand }),
+  setUserProductName: (name) => set({ userProductName: name }),
 
-  // JS Spec editor
-  specCode: `{
-  name: "Mesa Noguchi",
-  dimensions: { width: 130, depth: 90, height: 40 },
-  materials: ["Nogal", "Cristal templado"],
-  weight: 18.5,
-  finishes: [
-    { name: "Nogal", hex: "#5C4033" },
-    { name: "Roble", hex: "#C4A882" }
-  ]
-}`,
-  parsedSpecs: null,
-  specsError: null,
-  setSpecCode: (code) => set({ specCode: code }),
-  setParsedSpecs: (specs) => set({ parsedSpecs: specs }),
-  setSpecsError: (error) => set({ specsError: error }),
+  // AI Generated
+  setFurnitureData: (data) => set({ furnitureData: data, editedData: JSON.parse(JSON.stringify(data)) }),
+  setReferenceImage: (img) => set({ referenceImage: img }),
+  setCanvasImage: (img) => set({ canvasImage: img }),
+  setFichaLayout: (layout) => set({ fichaLayout: layout }),
+
+  // Editable fields
+  updateField: (path, value) =>
+    set((state) => {
+      if (!state.editedData) return {};
+      const updated = setPathValue(state.editedData, path, value);
+      return { editedData: updated };
+    }),
+
+  // Extras
+  addExtra: (extra) =>
+    set((state) => ({ extras: [...state.extras, extra] })),
+  removeExtra: (id) =>
+    set((state) => ({ extras: state.extras.filter((e) => e.id !== id) })),
+  updateExtra: (id, updates) =>
+    set((state) => ({
+      extras: state.extras.map((e) =>
+        e.id === id ? { ...e, ...updates } : e
+      ),
+    })),
+
+  // Generation status
+  setGeneratingStep: (step) => set({ generatingStep: step }),
+  setError: (error) => set({ error }),
+
+  // Reset
+  reset: () => set({ ...initialState, userDimensions: { ...defaultDimensions } }),
 }));
