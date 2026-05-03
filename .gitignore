@@ -27,6 +27,9 @@ yarn-error.log*
 .env*.local
 .env
 
+# ZAI SDK config (contains API keys)
+.z-ai-config
+
 # vercel
 .vercel
 

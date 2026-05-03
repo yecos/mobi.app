@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import ZAI from "z-ai-web-dev-sdk";
+import { getZAI } from "@/lib/zai";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { image, dimensions, brand } = body;
 
-    const zai = await ZAI.create();
+    const zai = await getZAI();
 
-    // Use VLM to analyze the furniture image
-    const analysis = await zai.chat.completions.create({
+    // Use VLM vision endpoint to analyze the furniture image
+    const analysis = await zai.chat.completions.createVision({
+      model: "glm-4v-flash",
       messages: [
         {
           role: "system",
@@ -19,11 +20,11 @@ export async function POST(request: NextRequest) {
           role: "user",
           content: [
             {
-              type: "image_url" as const,
+              type: "image_url",
               image_url: { url: image },
             },
             {
-              type: "text" as const,
+              type: "text",
               text: `Analyze this furniture image. The real dimensions provided by the user are: Width: ${dimensions.width}cm, Height: ${dimensions.height}cm, Depth: ${dimensions.depth}cm${dimensions.seatHeight ? `, Seat height: ${dimensions.seatHeight}cm` : ""}. Brand: ${brand}.
 
 Return ONLY a valid JSON object with this exact structure:
@@ -45,7 +46,7 @@ Return ONLY a valid JSON object with this exact structure:
   "weight": estimated_weight_in_kg,
   "annotations": [
     "annotation about material/joinery",
-    "annotation about texture/finish", 
+    "annotation about texture/finish",
     "annotation about functional detail"
   ],
   "colorPalette": {
@@ -63,9 +64,9 @@ Return ONLY a valid JSON object with this exact structure:
 
 Use the user-provided dimensions exactly. Estimate weight based on material and size. Extract colors from the image.`,
             },
-          ] as any,
+          ],
         },
-      ] as any,
+      ],
     });
 
     // Parse the response

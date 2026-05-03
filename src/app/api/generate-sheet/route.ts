@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import ZAI from "z-ai-web-dev-sdk";
+import { getZAI } from "@/lib/zai";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { furnitureData, type } = body; // type: "complete" or "clean"
 
-    const zai = await ZAI.create();
+    const zai = await getZAI();
 
     // Build the prompt based on type
     let prompt: string;
