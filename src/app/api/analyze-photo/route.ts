@@ -67,7 +67,7 @@ Use the user-provided dimensions exactly. Estimate weight based on material and 
           ],
         },
       ],
-      max_tokens: 2000,
+      max_completion_tokens: 2000,
     });
 
     // Parse the response
