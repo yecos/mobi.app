@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ArrowLeft, Download, ZoomIn, ZoomOut, Type } from "lucide-react";
+import { ArrowLeft, Download, ZoomIn, ZoomOut, Type, Bug } from "lucide-react";
 import { toast } from "sonner";
 
 export default function EditingPhase() {
@@ -23,6 +23,7 @@ export default function EditingPhase() {
   const detectionResult = useMobiStore((s) => s.detectionResult);
 
   const [searchTerm, setSearchTerm] = useState("");
+  const [showDebug, setShowDebug] = useState(false);
 
   const filteredRegions = useMemo(() => {
     if (!searchTerm.trim()) return editedRegions;
@@ -59,9 +60,19 @@ export default function EditingPhase() {
               <span className="text-muted-foreground font-normal text-sm">— Editor de Texto</span>
             </h1>
           </div>
-          <Button size="sm" onClick={() => setPhase("export")} className="gap-1.5">
-            <Download className="h-4 w-4" /> Exportar
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant={showDebug ? "destructive" : "ghost"}
+              size="sm"
+              onClick={() => setShowDebug(!showDebug)}
+              className="gap-1.5"
+            >
+              <Bug className="h-4 w-4" /> {showDebug ? "Ocultar Debug" : "Debug"}
+            </Button>
+            <Button size="sm" onClick={() => setPhase("export")} className="gap-1.5">
+              <Download className="h-4 w-4" /> Exportar
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -79,9 +90,24 @@ export default function EditingPhase() {
             <span className="text-xs text-muted-foreground w-12 text-right">{scale}%</span>
           </div>
           <div className="w-full max-w-2xl origin-top transition-transform duration-200">
-            <FichaCanvas inlineEditing={true} />
+            <FichaCanvas inlineEditing={true} showDebug={showDebug} />
           </div>
           <p className="text-xs text-muted-foreground mt-3">{editedRegions.length} campos de texto detectados</p>
+
+          {/* Debug info panel */}
+          {showDebug && (
+            <div className="w-full max-w-2xl mt-4 p-3 bg-yellow-50 border border-yellow-300 rounded-lg text-xs font-mono overflow-auto max-h-60">
+              <p className="font-bold mb-2">OCR Debug Info:</p>
+              <p>Image: {detectionResult.imageWidth} x {detectionResult.imageHeight}px</p>
+              <p>Regions: {editedRegions.length}</p>
+              {editedRegions.map((r, i) => (
+                <div key={r.id} className="mt-1 border-t border-yellow-200 pt-1">
+                  <span className="text-red-600">#{i}</span> &quot;{r.text}&quot;<br />
+                  x:{r.x}% y:{r.y}% w:{r.w}% h:{r.h}% fontSize:{r.fontSize}px
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Side panel */}
@@ -110,6 +136,24 @@ export default function EditingPhase() {
                           <input type="color" value={activeRegion.color} onChange={(e) => updateRegion(activeRegion.id, { color: e.target.value })} className="h-8 w-8 rounded border border-border cursor-pointer" />
                           <Input value={activeRegion.color} onChange={(e) => updateRegion(activeRegion.id, { color: e.target.value })} className="h-8 text-xs flex-1" />
                         </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">X%</Label>
+                        <Input type="number" step="0.1" value={activeRegion.x} onChange={(e) => updateRegion(activeRegion.id, { x: Number(e.target.value) || 0 })} className="h-8 text-xs" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Y%</Label>
+                        <Input type="number" step="0.1" value={activeRegion.y} onChange={(e) => updateRegion(activeRegion.id, { y: Number(e.target.value) || 0 })} className="h-8 text-xs" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">W%</Label>
+                        <Input type="number" step="0.1" value={activeRegion.w} onChange={(e) => updateRegion(activeRegion.id, { w: Number(e.target.value) || 1 })} className="h-8 text-xs" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">H%</Label>
+                        <Input type="number" step="0.1" value={activeRegion.h} onChange={(e) => updateRegion(activeRegion.id, { h: Number(e.target.value) || 1 })} className="h-8 text-xs" />
                       </div>
                     </div>
                     <div className="flex items-center gap-2">

@@ -5,22 +5,19 @@ import { useMobiStore, type TextRegion } from "@/store/mobi-store";
 
 interface FichaCanvasProps {
   inlineEditing?: boolean;
+  showDebug?: boolean;
 }
 
 /**
  * Renders the uploaded image with overlaid input fields at the exact
  * positions where text was detected by OCR.
  *
- * Positioning: Uses CSS percentages (left/top/width/height) relative to
- * the container. Since the image fills the container width and maintains
- * its aspect ratio, the percentage coordinates from OCR map exactly to
- * the correct positions on the displayed image.
- *
- * Font size: Calculated from the container width and the image's natural
- * aspect ratio, then scaled from the original image coordinates.
- * lineHeight: 1 ensures text fills the bounding box height.
+ * APPROACH: The container uses CSS `aspect-ratio` matching the image
+ * dimensions, so percentage-based `top`/`left`/`width`/`height` on
+ * absolute-positioned children map directly to the correct pixel
+ * positions on the displayed image.
  */
-export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) {
+export default function FichaCanvas({ inlineEditing = true, showDebug = false }: FichaCanvasProps) {
   const uploadedImage = useMobiStore((s) => s.uploadedImage);
   const detectionResult = useMobiStore((s) => s.detectionResult);
   const editedRegions = useMobiStore((s) => s.editedRegions);
@@ -29,14 +26,14 @@ export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) 
   const setActiveFieldId = useMobiStore((s) => s.setActiveFieldId);
   const scale = useMobiStore((s) => s.scale);
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(0);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [displayWidth, setDisplayWidth] = useState(0);
 
   useEffect(() => {
-    const el = containerRef.current;
+    const el = wrapperRef.current;
     if (!el) return;
     const observer = new ResizeObserver((entries) => {
-      setContainerWidth(entries[0].contentRect.width);
+      setDisplayWidth(entries[0].contentRect.width);
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -51,36 +48,82 @@ export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) 
   }
 
   const { imageWidth, imageHeight } = detectionResult;
-  // Scale factor from original image to displayed size
-  const scaleFactor = containerWidth > 0 ? containerWidth / imageWidth : 1;
+  const aspectRatio = imageWidth / imageHeight;
+  const scaleFactor = displayWidth > 0 ? displayWidth / imageWidth : 1;
 
   return (
     <div
-      ref={containerRef}
-      className="relative w-full overflow-hidden bg-muted/20 rounded-lg select-none"
+      ref={wrapperRef}
       style={{
         transform: `scale(${scale / 100})`,
         transformOrigin: "top center",
       }}
-      onClick={() => setActiveFieldId(null)}
     >
-      <img
-        src={uploadedImage}
-        alt="Ficha técnica"
-        className="w-full h-auto block"
-        draggable={false}
-      />
-      {editedRegions.map((region) => (
-        <TextRegionInput
-          key={region.id}
-          region={region}
-          scaleFactor={scaleFactor}
-          isActive={activeFieldId === region.id}
-          inlineEditing={inlineEditing}
-          onUpdate={(updates) => updateRegion(region.id, updates)}
-          onActivate={() => setActiveFieldId(region.id)}
+      {/* This is the key container: position relative + aspect-ratio from the image */}
+      <div
+        style={{
+          position: "relative",
+          width: "100%",
+          aspectRatio: `${imageWidth} / ${imageHeight}`,
+          overflow: "hidden",
+          borderRadius: "8px",
+          backgroundColor: "#f5f5f5",
+          userSelect: "none",
+        }}
+        onClick={() => setActiveFieldId(null)}
+      >
+        {/* Image fills the container exactly */}
+        <img
+          src={uploadedImage}
+          alt="Ficha técnica"
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "fill",
+            pointerEvents: "none",
+          }}
+          draggable={false}
         />
-      ))}
+
+        {/* Text region overlays */}
+        {editedRegions.map((region) => (
+          <TextRegionInput
+            key={region.id}
+            region={region}
+            scaleFactor={scaleFactor}
+            isActive={activeFieldId === region.id}
+            inlineEditing={inlineEditing}
+            showDebug={showDebug}
+            onUpdate={(updates) => updateRegion(region.id, updates)}
+            onActivate={() => setActiveFieldId(region.id)}
+          />
+        ))}
+
+        {/* Debug: show OCR coordinates */}
+        {showDebug && editedRegions.map((region, i) => (
+          <div
+            key={`debug-${region.id}`}
+            style={{
+              position: "absolute",
+              left: `${region.x}%`,
+              top: `${region.y}%`,
+              width: `${region.w}%`,
+              height: `${region.h}%`,
+              border: "2px solid red",
+              backgroundColor: "rgba(255,0,0,0.1)",
+              pointerEvents: "none",
+              zIndex: 100,
+            }}
+          >
+            <span style={{ fontSize: "9px", color: "red", background: "white", padding: "1px" }}>
+              {i}: {region.x.toFixed(1)},{region.y.toFixed(1)} {region.w.toFixed(1)}x{region.h.toFixed(1)}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -90,6 +133,7 @@ function TextRegionInput({
   scaleFactor,
   isActive,
   inlineEditing,
+  showDebug,
   onUpdate,
   onActivate,
 }: {
@@ -97,16 +141,17 @@ function TextRegionInput({
   scaleFactor: number;
   isActive: boolean;
   inlineEditing: boolean;
+  showDebug: boolean;
   onUpdate: (updates: Partial<TextRegion>) => void;
   onActivate: () => void;
 }) {
-  // Font size scaled to displayed image size.
-  // With lineHeight: 1, the text visually fills the bounding box height.
+  // Font size scaled to displayed image size
   const displayFontSize = region.fontSize * scaleFactor;
 
-  // Use percentage positioning — this maps directly to the image coordinates
-  // because the image fills the container width with h-auto (aspect ratio preserved)
-  const boxStyle: React.CSSProperties = {
+  // IMPORTANT: All positioning via inline styles with percentage values.
+  // These percentages are relative to the container which has aspect-ratio
+  // matching the original image, so they map exactly to pixel positions.
+  const wrapperStyle: React.CSSProperties = {
     position: "absolute",
     left: `${region.x}%`,
     top: `${region.y}%`,
@@ -115,9 +160,11 @@ function TextRegionInput({
     backgroundColor: "#FFFFFF",
     overflow: "hidden",
     boxSizing: "border-box",
+    zIndex: isActive ? 10 : 5,
+    cursor: "text",
   };
 
-  // Text styling: black text, lineHeight 1 fills the box height
+  // Shared text style
   const textStyle: React.CSSProperties = {
     fontSize: `${displayFontSize}px`,
     lineHeight: "1",
@@ -133,9 +180,8 @@ function TextRegionInput({
     return (
       <div
         style={{
-          ...boxStyle,
-          zIndex: isActive ? 10 : 5,
-          outline: isActive ? "2px solid rgba(59,130,246,0.8)" : undefined,
+          ...wrapperStyle,
+          outline: isActive ? "2px solid #3b82f6" : undefined,
         }}
         onClick={(e) => { e.stopPropagation(); onActivate(); }}
       >
@@ -156,18 +202,22 @@ function TextRegionInput({
             display: "block",
             boxSizing: "border-box",
             WebkitAppearance: "none",
-            appearance: "none",
+            appearance: "none" as string,
           }}
           autoFocus={isActive}
         />
+        {showDebug && (
+          <div style={{ position: "absolute", bottom: 0, right: 0, fontSize: "7px", background: "yellow", padding: "1px", color: "black" }}>
+            {region.fontSize}px
+          </div>
+        )}
       </div>
     );
   }
 
   return (
     <div
-      style={boxStyle}
-      className="cursor-pointer hover:outline hover:outline-1 hover:outline-blue-400/40"
+      style={wrapperStyle}
       onClick={(e) => { e.stopPropagation(); onActivate(); }}
     >
       <div style={textStyle}>
