@@ -78,21 +78,43 @@ Usa las dimensiones proporcionadas por el usuario exactamente. Estima el peso ba
       max_completion_tokens: 2000,
     });
 
-    // Parse the response
+    // Parse the response — handle multiple VLM output formats
     const content = analysis.choices[0]?.message?.content || "";
+    console.log("[analyze-photo] VLM raw response length:", content.length);
+
     let data;
     try {
       data = JSON.parse(content);
     } catch {
-      const jsonMatch = content.match(/```(?:json)?\\s*([\\s\\S]*?)```/);
-      if (jsonMatch) {
-        data = JSON.parse(jsonMatch[1].trim());
-      } else {
+      // Try markdown code block first: ```json ... ``` or ``` ... ```
+      const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) {
+        try {
+          const cleaned = codeBlockMatch[1].trim().replace(/,\s*([}\]])/g, "$1");
+          data = JSON.parse(cleaned);
+        } catch {
+          // Code block content wasn't valid JSON either, fall through
+        }
+      }
+
+      if (!data) {
+        // Try to extract raw JSON object from the text
         const objMatch = content.match(/\{[\s\S]*\}/);
         if (objMatch) {
-          data = JSON.parse(objMatch[0]);
+          try {
+            const cleaned = objMatch[0].replace(/,\s*([}\]])/g, "$1");
+            data = JSON.parse(cleaned);
+          } catch {
+            console.error("[analyze-photo] Failed to parse extracted JSON. Raw:", content.slice(0, 800));
+            throw new Error(
+              `Could not parse AI response as JSON. Raw VLM output (first 500 chars): ${content.slice(0, 500)}`
+            );
+          }
         } else {
-          throw new Error("Could not parse AI response as JSON");
+          console.error("[analyze-photo] No JSON found in VLM response. Raw:", content.slice(0, 800));
+          throw new Error(
+            `No JSON object found in AI response. Raw VLM output (first 500 chars): ${content.slice(0, 500)}`
+          );
         }
       }
     }

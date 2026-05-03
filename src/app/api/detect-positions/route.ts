@@ -181,19 +181,43 @@ Be thorough — find ALL text elements. Each field ID should appear exactly once
     });
 
     const content = detection.choices[0]?.message?.content || "";
+    console.log("[detect-positions] VLM raw response length:", content.length);
 
-    // Parse response
+    // Parse response — handle multiple VLM output formats
     let data;
     try {
       data = JSON.parse(content);
     } catch {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        // Remove trailing commas
-        const cleaned = jsonMatch[0].replace(/,\s*([}\]])/g, "$1");
-        data = JSON.parse(cleaned);
-      } else {
-        throw new Error("Could not parse position detection response");
+      // Try markdown code block first: ```json ... ``` or ``` ... ```
+      const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) {
+        try {
+          const cleaned = codeBlockMatch[1].trim().replace(/,\s*([}\]])/g, "$1");
+          data = JSON.parse(cleaned);
+        } catch {
+          // Code block content wasn't valid JSON either, fall through
+        }
+      }
+
+      if (!data) {
+        // Try to extract raw JSON object from the text
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            const cleaned = jsonMatch[0].replace(/,\s*([}\]])/g, "$1");
+            data = JSON.parse(cleaned);
+          } catch {
+            console.error("[detect-positions] Failed to parse extracted JSON. Raw:", content.slice(0, 800));
+            throw new Error(
+              `Could not parse position detection response. Raw VLM output (first 500 chars): ${content.slice(0, 500)}`
+            );
+          }
+        } else {
+          console.error("[detect-positions] No JSON object found in VLM response. Raw:", content.slice(0, 800));
+          throw new Error(
+            `No JSON object found in position detection response. Raw VLM output (first 500 chars): ${content.slice(0, 500)}`
+          );
+        }
       }
     }
 
