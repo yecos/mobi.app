@@ -61,18 +61,22 @@ export default function InputPhase() {
     setError(null);
 
     try {
+      console.log("[InputPhase] Starting OCR detection...");
       const result = await detectText(uploadedImage, (percent) => {
         setOcrProgress(percent);
       });
 
+      console.log("[InputPhase] OCR result:", result.regions.length, "regions");
+
       if (!result.regions || result.regions.length === 0) {
-        throw new Error("No se detectó texto en la imagen. Intenta con una imagen más clara.");
+        throw new Error("No se detectó texto en la imagen. Intenta con una imagen con texto más claro y grande.");
       }
 
       setDetectionResult(result);
       setPhase("editing");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Error desconocido";
+      console.error("[InputPhase] OCR error:", message, err);
       setError(message);
       toast.error(message);
     } finally {
