@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getZAI } from "@/lib/zai";
+import { getOpenAI } from "@/lib/openai";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { image, dimensions, brand } = body;
 
-    const zai = await getZAI();
+    const openai = getOpenAI();
 
-    // Use VLM vision endpoint to analyze the furniture image
-    const analysis = await zai.chat.completions.createVision({
-      model: "glm-4v-flash",
+    // Use GPT-4o vision to analyze the furniture image
+    const analysis = await openai.chat.completions.create({
+      model: "gpt-4o",
       messages: [
         {
           role: "system",
@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
           content: [
             {
               type: "image_url",
-              image_url: { url: image },
+              image_url: { url: image, detail: "high" },
             },
             {
               type: "text",
@@ -67,6 +67,7 @@ Use the user-provided dimensions exactly. Estimate weight based on material and 
           ],
         },
       ],
+      max_tokens: 2000,
     });
 
     // Parse the response

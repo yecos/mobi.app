@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getZAI } from "@/lib/zai";
+import { getOpenAI } from "@/lib/openai";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { furnitureData, type } = body; // type: "complete" or "clean"
 
-    const zai = await getZAI();
+    const openai = getOpenAI();
 
     // Build the prompt based on type
     let prompt: string;
@@ -108,13 +108,16 @@ The result should be a clean visual template — the structural design without a
 Same 1200 x 1600 pixels, pearl gray background (#E5E5E5).`;
     }
 
-    // Generate image
-    const response = await zai.images.generations.create({
+    // Generate image with DALL-E 3
+    const response = await openai.images.generate({
+      model: "dall-e-3",
       prompt,
-      size: "864x1152", // closest to 1200x1600 aspect ratio (3:4)
+      size: "1024x1792", // portrait, closest to 1200x1600
+      quality: "hd",
+      response_format: "b64_json",
     });
 
-    const imageData = response.data[0]?.base64;
+    const imageData = response.data?.[0]?.b64_json;
     if (!imageData) {
       throw new Error("No image generated");
     }
