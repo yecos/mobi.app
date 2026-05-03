@@ -108,11 +108,11 @@ The result should be a clean visual template — the structural design without a
 Same 1200 x 1600 pixels, pearl gray background (#E5E5E5).`;
     }
 
-    // Generate image with GPT-4o (native image generation)
+    // Generate image with OpenAI Image model (gpt-image-1)
     const response = await openai.images.generate({
-      model: "gpt-4o",
+      model: "gpt-image-1",
       prompt,
-      size: "1024x1536", // portrait, closest to 1200x1600 (3:4 ratio)
+      size: "1024x1536", // portrait, closest to 1200x1600
       quality: "high",
       response_format: "b64_json",
     });

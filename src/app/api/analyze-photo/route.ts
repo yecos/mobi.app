@@ -8,9 +8,9 @@ export async function POST(request: NextRequest) {
 
     const openai = getOpenAI();
 
-    // Use GPT-4o vision to analyze the furniture image
+    // Use GPT-5.4-mini vision to analyze the furniture image
     const analysis = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-5.4-mini",
       messages: [
         {
           role: "system",
