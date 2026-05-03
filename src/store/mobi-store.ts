@@ -25,7 +25,7 @@ export interface DetectionResult {
   bgColor: string;      // detected background color for covering original text
 }
 
-export type AppPhase = "input" | "generating" | "editing" | "export";
+export type AppPhase = "input" | "editing" | "export";
 
 interface MobiStore {
   // Phase

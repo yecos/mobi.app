@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { useMobiStore, type DetectionResult } from "@/store/mobi-store";
+import { useMobiStore } from "@/store/mobi-store";
+import { detectText } from "@/lib/client-ocr";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { motion } from "framer-motion";
 import { Upload, Sparkles, Image as ImageIcon, X } from "lucide-react";
 import { toast } from "sonner";
@@ -15,11 +17,13 @@ export default function InputPhase() {
     setUploadedImage,
     setPhase,
     setDetectionResult,
-    setGeneratingStep,
+    generatingStep,
     setError,
   } = useMobiStore();
 
   const [isDragOver, setIsDragOver] = useState(false);
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [isProcessing, setIsProcessing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback(
@@ -35,7 +39,6 @@ export default function InputPhase() {
       const reader = new FileReader();
       reader.onload = (e) => {
         const result = e.target?.result as string;
-        // Get image dimensions
         const img = new Image();
         img.onload = () => {
           setUploadedImage(result, file.name, img.naturalWidth, img.naturalHeight);
@@ -53,49 +56,30 @@ export default function InputPhase() {
       return;
     }
 
-    const { uploadedImageWidth, uploadedImageHeight } = useMobiStore.getState();
-    setPhase("generating");
+    setIsProcessing(true);
+    setOcrProgress(0);
     setError(null);
-    setGeneratingStep("Detectando texto en la imagen...");
 
     try {
-      const detectRes = await fetch("/api/detect-text", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image: uploadedImage,
-          imageWidth: uploadedImageWidth,
-          imageHeight: uploadedImageHeight,
-        }),
+      const result = await detectText(uploadedImage, (percent) => {
+        setOcrProgress(percent);
       });
 
-      if (!detectRes.ok) {
-        const errData = await detectRes.json();
-        throw new Error(errData.error || "Error al detectar texto");
-      }
-
-      const detectData = await detectRes.json();
-      const result: DetectionResult = detectData.result;
-
       if (!result.regions || result.regions.length === 0) {
-        throw new Error("No se detectó texto en la imagen. Intenta con otra imagen más clara.");
+        throw new Error("No se detectó texto en la imagen. Intenta con una imagen más clara.");
       }
 
       setDetectionResult(result);
-
-      // Small delay for UX
-      await new Promise((r) => setTimeout(r, 500));
-
       setPhase("editing");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Error desconocido";
       setError(message);
       toast.error(message);
-      setPhase("input");
     } finally {
-      setGeneratingStep(null);
+      setIsProcessing(false);
+      setOcrProgress(0);
     }
-  }, [uploadedImage, setPhase, setError, setGeneratingStep, setDetectionResult]);
+  }, [uploadedImage, setPhase, setError, setDetectionResult]);
 
   const removeImage = useCallback(() => {
     setUploadedImage("", "", 0, 0);
@@ -125,7 +109,7 @@ export default function InputPhase() {
             transition={{ delay: 0.2 }}
             className="text-muted-foreground mt-2"
           >
-            Detecta y edita texto en fichas técnicas con IA
+            Detecta y edita texto en fichas técnicas
           </motion.p>
         </div>
 
@@ -135,7 +119,7 @@ export default function InputPhase() {
             <div className="space-y-2">
               <h3 className="text-sm font-semibold">Sube tu ficha técnica</h3>
               <p className="text-xs text-muted-foreground">
-                La IA detectará todo el texto y crearás campos editables en las posiciones exactas
+                El OCR detectará todo el texto directamente en tu navegador — posiciones exactas
               </p>
               {!uploadedImage ? (
                 <div
@@ -187,7 +171,7 @@ export default function InputPhase() {
               ) : (
                 <div className="relative rounded-xl overflow-hidden border border-border/50 bg-muted/30">
                   <div className="flex items-center gap-3 p-3">
-                    <div className="h-20 w-20 rounded-lg overflow-hidden flex-shrink-0 bg-muted">
+                    <div className="h-16 w-16 rounded-lg overflow-hidden flex-shrink-0 bg-muted">
                       <img
                         src={uploadedImage}
                         alt="Vista previa"
@@ -209,12 +193,12 @@ export default function InputPhase() {
                       variant="ghost"
                       size="icon"
                       onClick={removeImage}
+                      disabled={isProcessing}
                       className="flex-shrink-0 text-muted-foreground hover:text-destructive"
                     >
                       <X className="h-4 w-4" />
                     </Button>
                   </div>
-                  {/* Image preview */}
                   <div className="border-t border-border/30 p-2">
                     <img
                       src={uploadedImage}
@@ -226,15 +210,48 @@ export default function InputPhase() {
               )}
             </div>
 
+            {/* OCR Progress */}
+            {isProcessing && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">
+                    {generatingStep || "Procesando..."}
+                  </span>
+                  <span className="text-sm text-muted-foreground">{ocrProgress}%</span>
+                </div>
+                <Progress value={ocrProgress} className="h-2" />
+                <p className="text-xs text-muted-foreground">
+                  El OCR se ejecuta en tu navegador — no se envían datos al servidor
+                </p>
+              </motion.div>
+            )}
+
             {/* Detect Button */}
             <Button
               onClick={handleDetect}
               size="lg"
-              disabled={!uploadedImage}
+              disabled={!uploadedImage || isProcessing}
               className="w-full text-base font-semibold h-12 gap-2"
             >
-              <Sparkles className="h-5 w-5" />
-              Detectar Texto con IA
+              {isProcessing ? (
+                <>
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    className="w-5 h-5 border-2 border-current border-t-transparent rounded-full"
+                  />
+                  Procesando OCR...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-5 w-5" />
+                  Detectar Texto con OCR
+                </>
+              )}
             </Button>
           </CardContent>
         </Card>

@@ -4,19 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { useMobiStore, type TextRegion } from "@/store/mobi-store";
 
 interface FichaCanvasProps {
-  /** If true, inputs are always shown as editable fields */
   inlineEditing?: boolean;
 }
 
 /**
  * Renders the uploaded image with overlaid input fields at the exact
- * positions where text was detected. Each input matches the detected
- * text's size (width, height, font-size) so it visually replaces
- * the original text.
- *
- * Font sizes are computed by scaling the original pixel fontSize
- * to the actual rendered container width, ensuring the input text
- * matches the original text size at any zoom level.
+ * positions where text was detected. Font sizes are computed by scaling
+ * the original pixel fontSize using a ResizeObserver, ensuring the
+ * input text matches the original text size at any zoom level.
  */
 export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) {
   const uploadedImage = useMobiStore((s) => s.uploadedImage);
@@ -30,7 +25,6 @@ export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) 
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
 
-  // Track actual rendered container width for font-size scaling
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -50,8 +44,6 @@ export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) 
   }
 
   const { imageWidth, imageHeight, bgColor } = detectionResult;
-
-  // Scale factor: how much the image is shrunk/enlarged on screen
   const scaleFactor = containerWidth > 0 ? containerWidth / imageWidth : 1;
 
   return (
@@ -64,15 +56,12 @@ export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) 
       }}
       onClick={() => setActiveFieldId(null)}
     >
-      {/* Original image as background */}
       <img
         src={uploadedImage}
         alt="Ficha técnica"
         className="w-full h-auto block"
         draggable={false}
       />
-
-      {/* Overlaid text region inputs — precise positioning */}
       {editedRegions.map((region) => (
         <TextRegionInput
           key={region.id}
@@ -89,11 +78,6 @@ export default function FichaCanvas({ inlineEditing = true }: FichaCanvasProps) 
   );
 }
 
-/**
- * A single text region rendered as an input field positioned
- * absolutely over the image at the exact detected location.
- * Font size is scaled to match the original image text size.
- */
 function TextRegionInput({
   region,
   scaleFactor,
@@ -111,10 +95,8 @@ function TextRegionInput({
   onUpdate: (updates: Partial<TextRegion>) => void;
   onActivate: () => void;
 }) {
-  // Compute the actual pixel font size for the current display scale
   const displayFontSize = Math.round(region.fontSize * scaleFactor);
 
-  // Position styles — percentages so they scale perfectly
   const style: React.CSSProperties = {
     position: "absolute",
     left: `${region.x}%`,
@@ -125,7 +107,6 @@ function TextRegionInput({
     fontWeight: region.bold ? "bold" : "normal",
     color: region.color,
     lineHeight: "1.1",
-    letterSpacing: "normal",
   };
 
   if (isActive || inlineEditing) {
@@ -134,22 +115,11 @@ function TextRegionInput({
         style={style}
         className={`
           flex items-center cursor-text transition-all rounded-sm overflow-hidden
-          ${
-            isActive
-              ? "ring-2 ring-blue-500/80 z-10"
-              : "hover:ring-1 hover:ring-blue-400/40 z-[5]"
-          }
+          ${isActive ? "ring-2 ring-blue-500/80 z-10" : "hover:ring-1 hover:ring-blue-400/40 z-[5]"}
         `}
-        onClick={(e) => {
-          e.stopPropagation();
-          onActivate();
-        }}
+        onClick={(e) => { e.stopPropagation(); onActivate(); }}
       >
-        {/* Background cover to hide original text underneath */}
-        <div
-          className="absolute inset-0 rounded-sm"
-          style={{ backgroundColor: bgColor }}
-        />
+        <div className="absolute inset-0 rounded-sm" style={{ backgroundColor: bgColor }} />
         <input
           type="text"
           value={region.text}
@@ -161,7 +131,6 @@ function TextRegionInput({
             fontWeight: "inherit",
             color: "inherit",
             lineHeight: "inherit",
-            letterSpacing: "inherit",
             paddingLeft: "2px",
           }}
           autoFocus={isActive}
@@ -170,29 +139,14 @@ function TextRegionInput({
     );
   }
 
-  // Inactive: show text with transparent overlay
   return (
     <div
       style={style}
       className="flex items-center cursor-pointer transition-all hover:ring-1 hover:ring-blue-400/40 rounded-sm"
-      onClick={(e) => {
-        e.stopPropagation();
-        onActivate();
-      }}
+      onClick={(e) => { e.stopPropagation(); onActivate(); }}
     >
-      <div
-        className="absolute inset-0 rounded-sm opacity-90"
-        style={{ backgroundColor: bgColor }}
-      />
-      <span
-        className="relative truncate px-[2px]"
-        style={{
-          fontSize: "inherit",
-          fontWeight: "inherit",
-          color: "inherit",
-          lineHeight: "inherit",
-        }}
-      >
+      <div className="absolute inset-0 rounded-sm opacity-90" style={{ backgroundColor: bgColor }} />
+      <span className="relative truncate px-[2px]" style={{ fontSize: "inherit", fontWeight: "inherit", color: "inherit", lineHeight: "inherit" }}>
         {region.text}
       </span>
     </div>
