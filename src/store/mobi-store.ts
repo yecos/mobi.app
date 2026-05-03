@@ -90,11 +90,16 @@ export interface ExtraElement {
 }
 
 export type AppPhase = "input" | "generating" | "review" | "editing" | "export";
+export type InputMode = "ai" | "manual";
 
 interface MobiStore {
   // Phase
   phase: AppPhase;
   setPhase: (phase: AppPhase) => void;
+
+  // Input mode
+  inputMode: InputMode;
+  setInputMode: (mode: InputMode) => void;
 
   // Input
   uploadedImage: string | null; // base64
@@ -106,6 +111,14 @@ interface MobiStore {
   setUserDimensions: (dims: Partial<FurnitureDimensions>) => void;
   setUserBrand: (brand: string) => void;
   setUserProductName: (name: string) => void;
+
+  // Manual import
+  manualReferenceImage: string | null;
+  manualCanvasImage: string | null;
+  manualJsData: string;
+  setManualReferenceImage: (img: string | null) => void;
+  setManualCanvasImage: (img: string | null) => void;
+  setManualJsData: (js: string) => void;
 
   // AI Generated
   furnitureData: FurnitureData | null;
@@ -146,11 +159,15 @@ const defaultDimensions: FurnitureDimensions = {
 
 const initialState = {
   phase: "input" as AppPhase,
+  inputMode: "ai" as InputMode,
   uploadedImage: null as string | null,
   uploadedImageName: null as string | null,
   userDimensions: { ...defaultDimensions },
   userBrand: "VIVA MOBILI",
   userProductName: "",
+  manualReferenceImage: null as string | null,
+  manualCanvasImage: null as string | null,
+  manualJsData: "",
   furnitureData: null as FurnitureData | null,
   referenceImage: null as string | null,
   canvasImage: null as string | null,
@@ -185,6 +202,9 @@ export const useMobiStore = create<MobiStore>((set) => ({
   // Phase
   setPhase: (phase) => set({ phase }),
 
+  // Input mode
+  setInputMode: (mode) => set({ inputMode: mode }),
+
   // Input
   setUploadedImage: (data, name) =>
     set({ uploadedImage: data, uploadedImageName: name }),
@@ -194,6 +214,11 @@ export const useMobiStore = create<MobiStore>((set) => ({
     })),
   setUserBrand: (brand) => set({ userBrand: brand }),
   setUserProductName: (name) => set({ userProductName: name }),
+
+  // Manual import
+  setManualReferenceImage: (img) => set({ manualReferenceImage: img }),
+  setManualCanvasImage: (img) => set({ manualCanvasImage: img }),
+  setManualJsData: (js) => set({ manualJsData: js }),
 
   // AI Generated
   setFurnitureData: (data) => set({ furnitureData: data, editedData: JSON.parse(JSON.stringify(data)) }),
