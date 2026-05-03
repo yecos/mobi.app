@@ -2,7 +2,9 @@
  * Client-side OCR using Tesseract.js + Canvas API for color detection.
  * Runs entirely in the browser — no server needed, no timeouts.
  *
- * Uses createWorker explicitly for better Next.js compatibility.
+ * Uses TSV output from Tesseract for reliable bounding boxes.
+ * Tesseract.js v5 sometimes returns empty lines/words arrays,
+ * but TSV output always contains structured data with positions.
  */
 
 import { createWorker, Worker } from "tesseract.js";
@@ -28,8 +30,51 @@ export interface DetectionResult {
 }
 
 /**
+ * Parse Tesseract TSV output into structured word data.
+ * TSV format: level  page_num  block_num  par_num  line_num  word_num  left  top  width  height  conf  text
+ */
+interface TSVWord {
+  level: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  conf: number;
+  text: string;
+  lineNum: number;
+}
+
+function parseTSV(tsv: string): TSVWord[] {
+  const lines = tsv.trim().split("\n");
+  if (lines.length < 2) return [];
+
+  const words: TSVWord[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split("\t");
+    if (cols.length < 12) continue;
+
+    const level = parseInt(cols[0], 10);
+    const lineNum = parseInt(cols[4], 10);
+    const wordNum = parseInt(cols[5], 10);
+    const left = parseInt(cols[6], 10);
+    const top = parseInt(cols[7], 10);
+    const width = parseInt(cols[8], 10);
+    const height = parseInt(cols[9], 10);
+    const conf = parseFloat(cols[10]);
+    const text = cols[11] || "";
+
+    // Level 5 = word level
+    if (level === 5 && wordNum > 0 && text.trim()) {
+      words.push({ level, left, top, width, height, conf, text: text.trim(), lineNum });
+    }
+  }
+
+  return words;
+}
+
+/**
  * Detect text color in a bounding box region using canvas.
- * Samples dark pixels (likely text) and returns their average color.
  */
 function detectTextColor(
   ctx: CanvasRenderingContext2D,
@@ -102,7 +147,7 @@ function detectBgColor(ctx: CanvasRenderingContext2D, imgW: number, imgH: number
   return "#E5E5E5";
 }
 
-// Singleton worker — reuse across calls
+// Singleton worker
 let _worker: Worker | null = null;
 
 async function getWorker(onProgress?: (percent: number) => void): Promise<Worker> {
@@ -111,20 +156,19 @@ async function getWorker(onProgress?: (percent: number) => void): Promise<Worker
   console.log("[OCR] Creating Tesseract worker...");
   const worker = await createWorker("spa+eng", 1, {
     logger: (info) => {
-      console.log("[OCR]", info.status, Math.round((info.progress || 0) * 100) + "%");
       if (info.status === "recognizing text" && info.progress) {
         onProgress?.(Math.round(info.progress * 100));
       }
     },
   });
-  console.log("[OCR] Worker created successfully");
+  console.log("[OCR] Worker created");
   _worker = worker;
   return worker;
 }
 
 /**
- * Run OCR on the client using Tesseract.js Web Worker.
- * Returns precise bounding boxes in pixels + colors detected via canvas.
+ * Run OCR on the client using Tesseract.js.
+ * Uses TSV output for reliable bounding boxes (avoids v5 empty lines/words bug).
  */
 export async function detectText(
   imageDataUrl: string,
@@ -132,7 +176,7 @@ export async function detectText(
 ): Promise<DetectionResult> {
   console.log("[OCR] Starting text detection...");
 
-  // 1. Load image into canvas
+  // 1. Load image
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
     const imgEl = new Image();
     imgEl.onload = () => resolve(imgEl);
@@ -142,180 +186,72 @@ export async function detectText(
 
   const imgW = img.naturalWidth;
   const imgH = img.naturalHeight;
-  console.log("[OCR] Image loaded:", imgW, "x", imgH);
+  console.log("[OCR] Image:", imgW, "x", imgH);
 
-  // 2. Create canvas for color detection
+  // 2. Canvas for color detection
   const canvas = document.createElement("canvas");
   canvas.width = imgW;
   canvas.height = imgH;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) {
-    throw new Error("No se pudo crear el canvas");
-  }
+  if (!ctx) throw new Error("No se pudo crear el canvas");
   ctx.drawImage(img, 0, 0);
 
-  // 3. Detect background color
+  // 3. Background color
   const bgColor = detectBgColor(ctx, imgW, imgH);
-  console.log("[OCR] Background color:", bgColor);
 
-  // 4. Run Tesseract OCR with explicit worker
-  onProgress?.(5); // Starting
+  // 4. Run OCR
+  onProgress?.(5);
   const worker = await getWorker(onProgress);
-  onProgress?.(10); // Worker ready
+  onProgress?.(10);
 
-  console.log("[OCR] Running recognition...");
   const { data } = await worker.recognize(imageDataUrl);
-  console.log("[OCR] Recognition complete. Confidence:", data.confidence);
+  console.log("[OCR] Recognition done. Confidence:", data.confidence);
+  console.log("[OCR] Text preview:", (data.text || "").slice(0, 150));
 
-  // 5. Extract lines from OCR result
-  // Tesseract.js data.lines might not be in TypeScript types
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ocrAny = data as any;
-  const ocrLines: Array<{
-    text: string;
-    bbox: { x0: number; y0: number; x1: number; y1: number };
-    confidence: number;
-  }> = ocrAny.lines || [];
+  // 5. Parse TSV for bounding boxes (this ALWAYS works, unlike data.lines/data.words)
+  const tsvWords = parseTSV(data.tsv || "");
+  console.log("[OCR] TSV words parsed:", tsvWords.length);
 
-  console.log("[OCR] Found", ocrLines.length, "lines");
-
-  // Debug: if no lines, check words as fallback
-  if (ocrLines.length === 0) {
-    const ocrWords: Array<{
-      text: string;
-      bbox: { x0: number; y0: number; x1: number; y1: number };
-    }> = ocrAny.words || [];
-    console.log("[OCR] No lines found. Words count:", ocrWords.length);
-
-    if (ocrWords.length === 0) {
-      // Last resort: check if there's any text at all
-      const fullText = (data.text || "").trim();
-      console.log("[OCR] Full text detected:", fullText.slice(0, 200));
-      if (!fullText) {
-        throw new Error(
-          "No se detectó texto en la imagen. Intenta con una imagen con texto más claro y grande."
-        );
-      }
-    }
-
-    // Group words into lines by y-coordinate proximity
-    if (ocrWords.length > 0) {
-      return groupWordsIntoRegions(ocrWords, ctx, imgW, imgH, bgColor, onProgress);
-    }
+  if (tsvWords.length === 0) {
+    // Last resort: split data.text by lines and create approximate regions
+    console.log("[OCR] No TSV words. Falling back to text split...");
+    return fallbackFromText(data.text || "", ctx, imgW, imgH, bgColor, onProgress);
   }
 
-  // 6. Convert OCR lines → TextRegion
+  // 6. Group words into lines by lineNum
+  const lineGroups = new Map<number, TSVWord[]>();
+  for (const w of tsvWords) {
+    if (!lineGroups.has(w.lineNum)) {
+      lineGroups.set(w.lineNum, []);
+    }
+    lineGroups.get(w.lineNum)!.push(w);
+  }
+
+  console.log("[OCR] Line groups:", lineGroups.size);
+
+  // 7. Convert line groups → TextRegion
   const regions: TextRegion[] = [];
 
-  for (let i = 0; i < ocrLines.length; i++) {
-    const line = ocrLines[i];
-    const text = (line.text || "").trim();
+  // Sort lines by top position
+  const sortedLines = [...lineGroups.entries()]
+    .map(([num, words]) => ({ num, words }))
+    .sort((a, b) => {
+      const aTop = Math.min(...a.words.map((w) => w.top));
+      const bTop = Math.min(...b.words.map((w) => w.top));
+      return aTop - bTop;
+    });
+
+  for (const line of sortedLines) {
+    // Sort words left-to-right within line
+    const sortedWords = [...line.words].sort((a, b) => a.left - b.left);
+    const text = sortedWords.map((w) => w.text).join(" ").trim();
     if (!text) continue;
 
-    const bbox = line.bbox;
-    const lineH = bbox.y1 - bbox.y0;
-    const lineW = bbox.x1 - bbox.x0;
-
-    // Skip very tiny detections (noise)
-    if (lineH < 5 || lineW < 5) continue;
-
-    // Skip very low confidence (likely noise)
-    if (line.confidence < 20) continue;
-
-    const region: TextRegion = {
-      id: `text-${regions.length + 1}`,
-      x: parseFloat(((bbox.x0 / imgW) * 100).toFixed(2)),
-      y: parseFloat(((bbox.y0 / imgH) * 100).toFixed(2)),
-      w: parseFloat(((lineW / imgW) * 100).toFixed(2)),
-      h: parseFloat(((lineH / imgH) * 100).toFixed(2)),
-      text,
-      fontSize: Math.round(lineH * 0.82),
-      color: "#1a1a1a",
-      bold: false,
-      editable: true,
-    };
-
-    // Bold heuristic
-    const charCount = text.replace(/\s/g, "").length;
-    if (charCount > 0) {
-      const avgCharWidth = lineW / text.length;
-      const expectedCharWidth = region.fontSize * 0.55;
-      if (avgCharWidth > expectedCharWidth * 1.2) {
-        region.bold = true;
-      }
-    }
-
-    // Detect text color via canvas
-    region.color = detectTextColor(ctx, bbox.x0, bbox.y0, lineW, lineH, imgW, imgH);
-
-    regions.push(region);
-  }
-
-  onProgress?.(100);
-  console.log("[OCR] Final regions:", regions.length);
-
-  return { regions, imageWidth: imgW, imageHeight: imgH, bgColor };
-}
-
-/**
- * Fallback: group individual OCR words into lines by y-coordinate proximity,
- * then convert to TextRegion with colors.
- */
-function groupWordsIntoRegions(
-  words: Array<{
-    text: string;
-    bbox: { x0: number; y0: number; x1: number; y1: number };
-  }>,
-  ctx: CanvasRenderingContext2D,
-  imgW: number,
-  imgH: number,
-  bgColor: string,
-  onProgress?: (percent: number) => void
-): DetectionResult {
-  console.log("[OCR] Grouping", words.length, "words into lines...");
-
-  // Group words by y-coordinate (within 50% of average line height)
-  const groups: Array<Array<{
-    text: string;
-    bbox: { x0: number; y0: number; x1: number; y1: number };
-  }>> = [];
-
-  const sorted = [...words].sort((a, b) => a.bbox.y0 - b.bbox.y0 || a.bbox.x0 - b.bbox.x0);
-
-  for (const word of sorted) {
-    const wordH = word.bbox.y1 - word.bbox.y0;
-    if (wordH < 5) continue;
-
-    const wordMidY = (word.bbox.y0 + word.bbox.y1) / 2;
-
-    // Find a group this word belongs to
-    let found = false;
-    for (const group of groups) {
-      const groupMidY = (group[0].bbox.y0 + group[0].bbox.y1) / 2;
-      const avgH = group.reduce((s, w) => s + (w.bbox.y1 - w.bbox.y0), 0) / group.length;
-      if (Math.abs(wordMidY - groupMidY) < avgH * 0.7) {
-        group.push(word);
-        found = true;
-        break;
-      }
-    }
-
-    if (!found) {
-      groups.push([word]);
-    }
-  }
-
-  // Convert groups → TextRegion
-  const regions: TextRegion[] = [];
-
-  for (const group of groups) {
-    const text = group.map((w) => w.text).join(" ").trim();
-    if (!text) continue;
-
-    const x0 = Math.min(...group.map((w) => w.bbox.x0));
-    const y0 = Math.min(...group.map((w) => w.bbox.y0));
-    const x1 = Math.max(...group.map((w) => w.bbox.x1));
-    const y1 = Math.max(...group.map((w) => w.bbox.y1));
+    // Bounding box for the entire line
+    const x0 = Math.min(...sortedWords.map((w) => w.left));
+    const y0 = Math.min(...sortedWords.map((w) => w.top));
+    const x1 = Math.max(...sortedWords.map((w) => w.left + w.width));
+    const y1 = Math.max(...sortedWords.map((w) => w.top + w.height));
 
     const lineW = x1 - x0;
     const lineH = y1 - y0;
@@ -349,7 +285,54 @@ function groupWordsIntoRegions(
   }
 
   onProgress?.(100);
-  console.log("[OCR] Grouped into", regions.length, "regions");
+  console.log("[OCR] Final regions:", regions.length);
+  return { regions, imageWidth: imgW, imageHeight: imgH, bgColor };
+}
 
+/**
+ * Fallback: when TSV parsing fails, split data.text by newlines
+ * and create regions with estimated positions.
+ */
+function fallbackFromText(
+  fullText: string,
+  ctx: CanvasRenderingContext2D,
+  imgW: number,
+  imgH: number,
+  bgColor: string,
+  onProgress?: (percent: number) => void
+): DetectionResult {
+  const textLines = fullText.split("\n").map((l) => l.trim()).filter(Boolean);
+  console.log("[OCR] Fallback: creating", textLines.length, "regions from text lines");
+
+  const regions: TextRegion[] = [];
+  const lineHeight = imgH / (textLines.length + 2);
+
+  for (let i = 0; i < textLines.length; i++) {
+    const text = textLines[i];
+    if (!text) continue;
+
+    const estimatedY = (i + 1) * lineHeight;
+    const estimatedH = lineHeight * 0.7;
+    // Estimate width based on text length (rough: ~55% of fontSize per char)
+    const estimatedFontSize = Math.round(estimatedH * 0.82);
+    const estimatedW = Math.min(imgW * 0.9, text.length * estimatedFontSize * 0.55);
+
+    const region: TextRegion = {
+      id: `text-${regions.length + 1}`,
+      x: parseFloat(((imgW * 0.05) / imgW * 100).toFixed(2)),
+      y: parseFloat(((estimatedY / imgH) * 100).toFixed(2)),
+      w: parseFloat(((estimatedW / imgW) * 100).toFixed(2)),
+      h: parseFloat(((estimatedH / imgH) * 100).toFixed(2)),
+      text,
+      fontSize: estimatedFontSize,
+      color: detectTextColor(ctx, imgW * 0.05, estimatedY, estimatedW, estimatedH, imgW, imgH),
+      bold: false,
+      editable: true,
+    };
+
+    regions.push(region);
+  }
+
+  onProgress?.(100);
   return { regions, imageWidth: imgW, imageHeight: imgH, bgColor };
 }
