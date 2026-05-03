@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { useMobiStore, type ExtraElement } from "@/store/mobi-store";
-import { getFieldLabels } from "@/lib/ficha-layouts";
+import { useMobiStore, type ExtraElement, type GridField } from "@/store/mobi-store";
 import FichaCanvas from "./ficha-canvas";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,14 +31,22 @@ export default function EditingPhase() {
   const addExtra = useMobiStore((s) => s.addExtra);
   const removeExtra = useMobiStore((s) => s.removeExtra);
   const furnitureData = useMobiStore((s) => s.furnitureData);
-  const fichaLayout = useMobiStore((s) => s.fichaLayout);
+  const gridFields = useMobiStore((s) => s.gridFields);
+  const sheetBgColor = useMobiStore((s) => s.sheetBgColor);
 
   const [scale, setScale] = useState(100);
   const [activeFieldId, setActiveFieldId] = useState<string | null>(null);
   const [newAnnotation, setNewAnnotation] = useState("");
   const [jsCopied, setJsCopied] = useState(false);
 
-  const labels = useMemo(() => getFieldLabels(), []);
+  // Field labels derived from grid fields
+  const fieldLabels = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const f of gridFields) {
+      map[f.id] = f.label || f.id;
+    }
+    return map;
+  }, [gridFields]);
 
   const handleUpdateAnnotation = useCallback(
     (index: number, value: string) => {
@@ -129,7 +136,7 @@ export default function EditingPhase() {
     }
   }, [jsOutput]);
 
-  if (!editedData || !fichaLayout) {
+  if (!editedData || gridFields.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p className="text-muted-foreground">Sin datos para editar</p>
@@ -226,7 +233,7 @@ export default function EditingPhase() {
                 </h3>
                 <div className="space-y-3">
                   <div className="space-y-1">
-                    <Label className="text-xs">{labels["f-productType"]}</Label>
+                    <Label className="text-xs">{fieldLabels["f-productType"]}</Label>
                     <Input
                       value={editedData.productType ?? ""}
                       onChange={(e) => updateField("productType", e.target.value)}
@@ -235,7 +242,7 @@ export default function EditingPhase() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs">{labels["f-style"]}</Label>
+                    <Label className="text-xs">{fieldLabels["f-style"]}</Label>
                     <Input
                       value={editedData.style ?? ""}
                       onChange={(e) => updateField("style", e.target.value)}
@@ -244,7 +251,7 @@ export default function EditingPhase() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs">{labels["f-material"]}</Label>
+                    <Label className="text-xs">{fieldLabels["f-material"]}</Label>
                     <Input
                       value={editedData.material?.main ?? ""}
                       onChange={(e) => updateField("material.main", e.target.value)}
@@ -253,7 +260,7 @@ export default function EditingPhase() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs">{labels["f-finish"]}</Label>
+                    <Label className="text-xs">{fieldLabels["f-finish"]}</Label>
                     <Input
                       value={editedData.finish ?? ""}
                       onChange={(e) => updateField("finish", e.target.value)}
@@ -262,7 +269,7 @@ export default function EditingPhase() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs">{labels["f-feature"]}</Label>
+                    <Label className="text-xs">{fieldLabels["f-feature"]}</Label>
                     <Input
                       value={editedData.feature ?? ""}
                       onChange={(e) => updateField("feature", e.target.value)}
@@ -283,15 +290,15 @@ export default function EditingPhase() {
                 <div className="space-y-3">
                   {(
                     [
-                      { key: "width", label: labels["f-width"], unit: "cm" },
-                      { key: "height", label: labels["f-height"], unit: "cm" },
-                      { key: "depth", label: labels["f-depth"], unit: "cm" },
+                      { key: "width", label: fieldLabels["f-width"], unit: "cm" },
+                      { key: "height", label: fieldLabels["f-height"], unit: "cm" },
+                      { key: "depth", label: fieldLabels["f-depth"], unit: "cm" },
                       {
                         key: "seatHeight",
-                        label: labels["f-seatHeight"],
+                        label: fieldLabels["f-seatHeight"],
                         unit: "cm",
                       },
-                      { key: "weight", label: labels["f-weight"], unit: "kg" },
+                      { key: "weight", label: fieldLabels["f-weight"], unit: "kg" },
                     ] as const
                   ).map(({ key, label, unit }) => (
                     <div key={key} className="space-y-1">

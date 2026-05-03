@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useMobiStore, type LayoutField, type ExtraElement } from "@/store/mobi-store";
-import { getFieldLabels } from "@/lib/ficha-layouts";
+import { useMobiStore, type GridField, type ExtraElement } from "@/store/mobi-store";
 
 interface FichaCanvasProps {
   scale: number;
@@ -12,23 +11,20 @@ interface FichaCanvasProps {
 }
 
 /**
- * Maps a layout field ID to the corresponding value in editedData.
+ * Maps a grid field ID to the corresponding value in editedData.
  */
 function getFieldValue(
   fieldId: string,
   editedData: Record<string, unknown>
 ): string {
-  const labels = getFieldLabels();
   // Special top-level fields
   if (fieldId === "brand") return String(editedData.brand ?? "");
   if (fieldId === "sheetTitle") return "FICHA TÉCNICA";
-  if (fieldId === "productName") return String(editedData.productName ?? "");
+  if (fieldId === "productType") return String(editedData.productType ?? "");
 
   // Data fields (f-XXX pattern)
   const key = fieldId.replace("f-", "");
   switch (key) {
-    case "productType":
-      return String(editedData.productType ?? "");
     case "style":
       return String(editedData.style ?? "");
     case "material":
@@ -60,15 +56,6 @@ function getFieldValue(
     default:
       return "";
   }
-}
-
-/**
- * Gets the label text for a label field (l-XXX pattern).
- */
-function getLabelValue(fieldId: string): string {
-  const labels = getFieldLabels();
-  const key = fieldId.replace("l-", "");
-  return labels[`f-${key}`] ?? key;
 }
 
 /**
@@ -114,13 +101,25 @@ function setFieldValue(
   }
 }
 
+function fontSizeToPx(size: "small" | "medium" | "large"): number {
+  switch (size) {
+    case "small":
+      return 10;
+    case "medium":
+      return 14;
+    case "large":
+      return 20;
+  }
+}
+
 export default function FichaCanvas({
   scale,
   activeFieldId,
   onFieldClick,
 }: FichaCanvasProps) {
-  const canvasImage = useMobiStore((s) => s.canvasImage);
-  const fichaLayout = useMobiStore((s) => s.fichaLayout);
+  const referenceImage = useMobiStore((s) => s.referenceImage);
+  const gridFields = useMobiStore((s) => s.gridFields);
+  const sheetBgColor = useMobiStore((s) => s.sheetBgColor);
   const editedData = useMobiStore((s) => s.editedData);
   const extras = useMobiStore((s) => s.extras);
   const updateField = useMobiStore((s) => s.updateField);
@@ -129,28 +128,13 @@ export default function FichaCanvas({
   const [draggingExtra, setDraggingExtra] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
-  const LAYOUT_W = fichaLayout?.width ?? 1200;
-  const LAYOUT_H = fichaLayout?.height ?? 1600;
-
-  const getFieldStyle = useCallback(
-    (field: LayoutField) => {
-      const leftPct = (field.x / LAYOUT_W) * 100;
-      const topPct = (field.y / LAYOUT_H) * 100;
-      const widthPct = (field.w / LAYOUT_W) * 100;
-      const heightPct = (field.h / LAYOUT_H) * 100;
-      const fontSizePct = (field.fontSize / LAYOUT_W) * 100;
-
-      return {
-        position: "absolute" as const,
-        left: `${leftPct}%`,
-        top: `${topPct}%`,
-        width: `${widthPct}%`,
-        height: `${heightPct}%`,
-        fontSize: `${fontSizePct * (1 / (scale / 100))}vw`,
-      };
-    },
-    [LAYOUT_W, LAYOUT_H, scale]
-  );
+  if (!referenceImage || gridFields.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full text-muted-foreground">
+        No hay datos del lienzo
+      </div>
+    );
+  }
 
   const handleExtraMouseDown = useCallback(
     (e: React.MouseEvent, extraId: string) => {
@@ -162,14 +146,14 @@ export default function FichaCanvas({
         ?.getBoundingClientRect();
       if (!rect) return;
 
-      const relX = ((e.clientX - rect.left) / rect.width) * LAYOUT_W;
-      const relY = ((e.clientY - rect.top) / rect.height) * LAYOUT_H;
+      const relX = ((e.clientX - rect.left) / rect.width) * 100;
+      const relY = ((e.clientY - rect.top) / rect.height) * 100;
 
       setDraggingExtra(extraId);
       setDragOffset({ x: relX - extra.x, y: relY - extra.y });
       onFieldClick(null);
     },
-    [extras, LAYOUT_W, LAYOUT_H, onFieldClick]
+    [extras, onFieldClick]
   );
 
   const handleMouseMove = useCallback(
@@ -180,37 +164,20 @@ export default function FichaCanvas({
         ?.getBoundingClientRect();
       if (!rect) return;
 
-      const relX = ((e.clientX - rect.left) / rect.width) * LAYOUT_W;
-      const relY = ((e.clientY - rect.top) / rect.height) * LAYOUT_H;
+      const relX = ((e.clientX - rect.left) / rect.width) * 100;
+      const relY = ((e.clientY - rect.top) / rect.height) * 100;
 
       updateExtra(draggingExtra, {
-        x: Math.max(0, Math.min(LAYOUT_W, relX - dragOffset.x)),
-        y: Math.max(0, Math.min(LAYOUT_H, relY - dragOffset.y)),
+        x: Math.max(0, Math.min(100, relX - dragOffset.x)),
+        y: Math.max(0, Math.min(100, relY - dragOffset.y)),
       });
     },
-    [draggingExtra, dragOffset, LAYOUT_W, LAYOUT_H, updateExtra]
+    [draggingExtra, dragOffset, updateExtra]
   );
 
   const handleMouseUp = useCallback(() => {
     setDraggingExtra(null);
   }, []);
-
-  if (!canvasImage || !fichaLayout) {
-    return (
-      <div className="flex items-center justify-center h-full text-muted-foreground">
-        No hay datos del lienzo
-      </div>
-    );
-  }
-
-  // Collect all editable fields
-  const allFields: LayoutField[] = [
-    fichaLayout.brand,
-    fichaLayout.sheetTitle,
-    fichaLayout.productName,
-    ...fichaLayout.fields,
-    ...fichaLayout.annotations,
-  ];
 
   return (
     <div
@@ -221,42 +188,40 @@ export default function FichaCanvas({
       onMouseLeave={handleMouseUp}
       onClick={() => onFieldClick(null)}
     >
+      {/* Image A as background */}
       <img
-        src={canvasImage}
-        alt="Lienzo de ficha técnica"
+        src={referenceImage}
+        alt="Ficha técnica"
         className="w-full h-auto select-none"
         draggable={false}
       />
 
-      {/* Overlay fields */}
-      {allFields.map((field) => {
-        if (field.type === "label") {
-          return (
-            <div
-              key={field.id}
-              style={getFieldStyle(field)}
-              className="pointer-events-none text-muted-foreground/70 select-none"
-            >
-              {getLabelValue(field.id)}
-            </div>
-          );
-        }
-
+      {/* Overlay editable fields — boxes with bg color that cover original text */}
+      {gridFields.map((field: GridField) => {
         const isActive = activeFieldId === field.id;
         const value = editedData
           ? getFieldValue(field.id, editedData as unknown as Record<string, unknown>)
           : "";
+        const pxFontSize = fontSizeToPx(field.fontSize);
+        // Scale font relative to container width (container ~640px at 100%)
+        const vwFont = `${pxFontSize / 6.4}vw`;
 
         return (
           <div
             key={field.id}
-            style={getFieldStyle(field)}
+            style={{
+              position: "absolute",
+              left: `${field.xPct}%`,
+              top: `${field.yPct}%`,
+              width: `${field.wPct}%`,
+              height: `${field.hPct}%`,
+            }}
             className={`
               flex items-center cursor-pointer transition-all
               ${
                 isActive
-                  ? "bg-primary/20 ring-1 ring-primary/50 rounded-sm z-10"
-                  : "bg-transparent hover:bg-primary/10 rounded-sm"
+                  ? "ring-2 ring-primary/60 rounded-sm z-10"
+                  : "hover:ring-1 hover:ring-primary/30 rounded-sm"
               }
             `}
             onClick={(e) => {
@@ -272,13 +237,24 @@ export default function FichaCanvas({
                   setFieldValue(field.id, e.target.value, updateField)
                 }
                 onClick={(e) => e.stopPropagation()}
-                className="w-full h-full bg-transparent text-foreground outline-none text-inherit px-0.5"
+                className="w-full h-full bg-transparent text-foreground outline-none px-0.5"
+                style={{
+                  backgroundColor: sheetBgColor,
+                  fontSize: vwFont,
+                  fontWeight: field.bold ? "bold" : "normal",
+                }}
                 autoFocus
               />
             ) : (
-              <span className="px-0.5 truncate w-full">
+              <span
+                className="px-0.5 truncate w-full"
+                style={{
+                  backgroundColor: sheetBgColor,
+                  fontSize: vwFont,
+                  fontWeight: field.bold ? "bold" : "normal",
+                }}
+              >
                 {value}
-                {field.unit ? ` ${field.unit}` : ""}
               </span>
             )}
           </div>
@@ -291,10 +267,10 @@ export default function FichaCanvas({
           key={extra.id}
           style={{
             position: "absolute",
-            left: `${(extra.x / LAYOUT_W) * 100}%`,
-            top: `${(extra.y / LAYOUT_H) * 100}%`,
-            width: `${(extra.w / LAYOUT_W) * 100}%`,
-            height: `${(extra.h / LAYOUT_H) * 100}%`,
+            left: `${extra.x}%`,
+            top: `${extra.y}%`,
+            width: `${extra.w / 1024 * 100}%`,
+            height: `${extra.h / 1536 * 100}%`,
           }}
           className={`border border-dashed border-primary/40 rounded cursor-grab active:cursor-grabbing ${draggingExtra === extra.id ? "ring-2 ring-primary/60" : ""}`}
           onMouseDown={(e) => handleExtraMouseDown(e, extra.id)}
@@ -307,15 +283,12 @@ export default function FichaCanvas({
               draggable={false}
             />
           ) : extra.type === "text" ? (
-            <div
-              className="w-full h-full flex items-center justify-center text-foreground/80 text-xs"
-              style={{ fontSize: extra.fontSize ? `${extra.fontSize / LAYOUT_W * 100}vw` : undefined }}
-            >
+            <div className="w-full h-full flex items-center justify-center text-foreground/80 text-xs">
               {extra.data}
             </div>
           ) : (
             <div className="w-full h-full flex items-center justify-center text-primary/60 text-xs">
-              {extra.type === "stamp" ? "🔒" : "📦"}
+              ✓ APROBADO
             </div>
           )}
         </div>

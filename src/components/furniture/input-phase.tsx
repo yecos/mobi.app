@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { useMobiStore, type InputMode, type FurnitureData } from "@/store/mobi-store";
-import { getLayoutByType } from "@/lib/ficha-layouts";
+import { useMobiStore, type InputMode, type FurnitureData, type GridField } from "@/store/mobi-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -71,6 +70,48 @@ function ModeToggle({
       </button>
     </div>
   );
+}
+
+// ─── Fallback fields (when grid detection returns nothing) ──
+function createFallbackFields(data: FurnitureData): GridField[] {
+  const fields: GridField[] = [];
+  let row = 2;
+
+  const addField = (id: string, label: string, type: "text" | "number" = "text") => {
+    fields.push({
+      id,
+      label,
+      cells: `A${row}:C${row}`,
+      xPct: 0, yPct: (row - 1) / 24 * 100,
+      wPct: 37.5, hPct: 1 / 24 * 100,
+      x: 0, y: (row - 1) * 64,
+      w: 384, h: 64,
+      fontSize: "medium",
+      bold: id === "brand",
+      type,
+    });
+    row++;
+  };
+
+  addField("brand", data.brand || "VIVA MOBILI");
+  addField("productType", data.productType);
+  addField("f-style", data.style);
+  addField("f-material", data.material?.main || "");
+  addField("f-finish", data.finish);
+  addField("f-feature", data.feature);
+  addField("f-width", String(data.dimensions?.width || ""), "number");
+  addField("f-height", String(data.dimensions?.height || ""), "number");
+  addField("f-depth", String(data.dimensions?.depth || ""), "number");
+  if (data.dimensions?.seatHeight) {
+    addField("f-seatHeight", String(data.dimensions.seatHeight), "number");
+  }
+  addField("f-weight", String(data.weight || ""), "number");
+
+  (data.annotations || []).forEach((ann, i) => {
+    addField(`ann-${i + 1}`, ann);
+  });
+
+  return fields;
 }
 
 // ─── Image Uploader Slot ───────────────────────────────
@@ -207,8 +248,9 @@ function AIMode() {
     setPhase,
     setFurnitureData,
     setReferenceImage,
-    setCanvasImage,
-    setFichaLayout,
+    setGridFields,
+    setSheetBgColor,
+    setImgDimensions,
     setGeneratingStep,
     setError,
   } = useMobiStore();
@@ -261,16 +303,23 @@ function AIMode() {
     setError(null);
 
     try {
-      setGeneratingStep("Analizando imagen...");
-      const analyzeRes = await fetch("/api/analyze-photo", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image: uploadedImage,
-          dimensions: userDimensions,
-          brand: userBrand,
+      // Step 1: Analyze photo + Generate ficha image IN PARALLEL
+      setGeneratingStep("Analizando imagen y generando ficha...");
+
+      const [analyzeRes, sheetRes] = await Promise.all([
+        fetch("/api/analyze-photo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            image: uploadedImage,
+            dimensions: userDimensions,
+            brand: userBrand,
+          }),
         }),
-      });
+        // We'll generate the image after we get furniture data,
+        // so for now just analyze
+        Promise.resolve(null as Response | null),
+      ]);
 
       if (!analyzeRes.ok) {
         const errData = await analyzeRes.json();
@@ -280,6 +329,7 @@ function AIMode() {
       const analyzeData = await analyzeRes.json();
       const furnitureData = analyzeData.data;
 
+      // Override with user-provided values
       furnitureData.brand = userBrand;
       furnitureData.dimensions = {
         ...furnitureData.dimensions,
@@ -297,41 +347,58 @@ function AIMode() {
 
       setFurnitureData(furnitureData);
 
-      setGeneratingStep("Generando ficha completa...");
-      const completeRes = await fetch("/api/generate-sheet", {
+      // Step 2: Generate ficha image
+      setGeneratingStep("Generando ficha técnica...");
+
+      const sheetResponse = await fetch("/api/generate-sheet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ furnitureData, type: "complete" }),
+        body: JSON.stringify({ furnitureData }),
       });
 
-      if (!completeRes.ok) {
-        const errData = await completeRes.json();
-        throw new Error(errData.error || "Error al generar ficha completa");
+      if (!sheetResponse.ok) {
+        const errData = await sheetResponse.json();
+        throw new Error(errData.error || "Error al generar ficha");
       }
 
-      const completeData = await completeRes.json();
-      setReferenceImage(completeData.image);
+      const sheetData = await sheetResponse.json();
+      setReferenceImage(sheetData.image);
 
-      setGeneratingStep("Generando plantilla limpia...");
-      const cleanRes = await fetch("/api/generate-sheet", {
+      // Step 3: Detect positions with grid overlay
+      setGeneratingStep("Detectando posiciones de texto...");
+
+      const detectRes = await fetch("/api/detect-positions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ furnitureData, type: "clean" }),
+        body: JSON.stringify({ image: sheetData.image }),
       });
 
-      if (!cleanRes.ok) {
-        const errData = await cleanRes.json();
-        throw new Error(errData.error || "Error al generar plantilla limpia");
+      if (!detectRes.ok) {
+        const errData = await detectRes.json();
+        throw new Error(errData.error || "Error al detectar posiciones");
       }
 
-      const cleanData = await cleanRes.json();
-      setCanvasImage(cleanData.image);
+      const detectData = await detectRes.json();
 
-      setGeneratingStep("Preparando editor...");
-      const layout = getLayoutByType(furnitureData.productType);
-      setFichaLayout(layout);
+      // If no fields detected, try once more with lower grid
+      let fields: GridField[] = detectData.fields || [];
+      let bgColor = detectData.sheetBgColor || "#E5E5E5";
+      let imgW = detectData.imgWidth || 1024;
+      let imgH = detectData.imgHeight || 1536;
 
+      if (fields.length === 0) {
+        // Fallback: create basic fields from furniture data
+        fields = createFallbackFields(furnitureData);
+        bgColor = "#E5E5E5";
+      }
+
+      setSheetBgColor(bgColor);
+      setImgDimensions(imgW, imgH);
+      setGridFields(fields);
+
+      // Small delay for UX
       await new Promise((r) => setTimeout(r, 500));
+
       setPhase("review");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Error desconocido";
@@ -352,8 +419,9 @@ function AIMode() {
     setGeneratingStep,
     setFurnitureData,
     setReferenceImage,
-    setCanvasImage,
-    setFichaLayout,
+    setGridFields,
+    setSheetBgColor,
+    setImgDimensions,
   ]);
 
   const removeImage = useCallback(() => {
@@ -573,16 +641,16 @@ function AIMode() {
 function ManualMode() {
   const {
     manualReferenceImage,
-    manualCanvasImage,
     manualJsData,
     setManualReferenceImage,
-    setManualCanvasImage,
     setManualJsData,
     setPhase,
     setFurnitureData,
     setReferenceImage,
-    setCanvasImage,
-    setFichaLayout,
+    setGridFields,
+    setSheetBgColor,
+    setImgDimensions,
+    setGeneratingStep,
   } = useMobiStore();
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -604,15 +672,13 @@ function ManualMode() {
   const validate = useCallback(() => {
     const newErrors: Record<string, string> = {};
     if (!manualReferenceImage)
-      newErrors.refImage = "Sube la ficha con texto (referencia)";
-    if (!manualCanvasImage)
-      newErrors.canvasImage = "Sube la ficha sin texto (plantilla limpia)";
+      newErrors.refImage = "Sube la ficha técnica (imagen con texto)";
     if (!manualJsData.trim()) newErrors.js = "Pega o sube el JS/JSON";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  }, [manualReferenceImage, manualCanvasImage, manualJsData]);
+  }, [manualReferenceImage, manualJsData]);
 
-  const handleImport = useCallback(() => {
+  const handleImport = useCallback(async () => {
     if (!validate()) {
       toast.error("Completa todos los campos requeridos");
       return;
@@ -680,12 +746,42 @@ function ManualMode() {
       // Set all data in the store
       setFurnitureData(parsed);
       setReferenceImage(manualReferenceImage);
-      setCanvasImage(manualCanvasImage);
 
-      // Get layout based on product type
-      const layout = getLayoutByType(parsed.productType);
-      setFichaLayout(layout);
+      // Auto-detect positions using grid + VLM
+      setPhase("generating");
+      setGeneratingStep("Detectando posiciones de texto...");
 
+      try {
+        const detectRes = await fetch("/api/detect-positions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: manualReferenceImage }),
+        });
+
+        if (detectRes.ok) {
+          const detectData = await detectRes.json();
+          const fields: GridField[] = detectData.fields || [];
+          if (fields.length > 0) {
+            setSheetBgColor(detectData.sheetBgColor || "#E5E5E5");
+            setImgDimensions(detectData.imgWidth || 1024, detectData.imgHeight || 1536);
+            setGridFields(fields);
+          } else {
+            // Fallback to generated fields
+            setGridFields(createFallbackFields(parsed));
+            setSheetBgColor("#E5E5E5");
+          }
+        } else {
+          // Fallback if detection fails
+          setGridFields(createFallbackFields(parsed));
+          setSheetBgColor("#E5E5E5");
+        }
+      } catch {
+        // Fallback if detection fails
+        setGridFields(createFallbackFields(parsed));
+        setSheetBgColor("#E5E5E5");
+      }
+
+      setGeneratingStep(null);
       toast.success("Ficha importada correctamente");
       setPhase("editing");
     } catch (err) {
@@ -697,12 +793,13 @@ function ManualMode() {
     validate,
     manualJsData,
     manualReferenceImage,
-    manualCanvasImage,
     setFurnitureData,
     setReferenceImage,
-    setCanvasImage,
-    setFichaLayout,
+    setGridFields,
+    setSheetBgColor,
+    setImgDimensions,
     setPhase,
+    setGeneratingStep,
   ]);
 
   return (
@@ -710,30 +807,20 @@ function ManualMode() {
       {/* Info banner */}
       <div className="rounded-xl bg-primary/5 border border-primary/20 p-4">
         <p className="text-sm text-foreground">
-          <strong>Modo Manual:</strong> Sube las imágenes de la ficha técnica
-          (con y sin texto) y el objeto JS con los datos editables. Irás
-          directamente al editor para modificar textos y valores.
+          <strong>Modo Manual:</strong> Sube la imagen de la ficha técnica y el
+          objeto JS con los datos. Las posiciones de texto se detectan
+          automáticamente con IA. Podrás editar textos y valores.
         </p>
       </div>
 
-      {/* Image A: Reference (with text) */}
+      {/* Ficha image */}
       <ImageSlot
-        label="Imagen A — Ficha con texto (referencia)"
+        label="Imagen de la ficha técnica"
         description="Arrastra la ficha completa con textos y números"
         image={manualReferenceImage}
         onImageSet={setManualReferenceImage}
         onImageClear={() => setManualReferenceImage(null)}
         error={errors.refImage}
-      />
-
-      {/* Image B: Clean canvas (without text) */}
-      <ImageSlot
-        label="Imagen B — Ficha sin texto (plantilla limpia)"
-        description="Arrastra la misma ficha pero sin textos ni números"
-        image={manualCanvasImage}
-        onImageSet={setManualCanvasImage}
-        onImageClear={() => setManualCanvasImage(null)}
-        error={errors.canvasImage}
       />
 
       {/* JS Data */}

@@ -8,9 +8,9 @@ export async function POST(request: NextRequest) {
 
     const openai = getOpenAI();
 
-    // Use GPT-5.4-mini vision to analyze the furniture image
+    // Use gpt-5-mini vision to analyze the furniture image
     const analysis = await openai.chat.completions.create({
-      model: "gpt-5.4-mini",
+      model: "gpt-5-mini",
       messages: [
         {
           role: "system",
@@ -25,44 +25,52 @@ export async function POST(request: NextRequest) {
             },
             {
               type: "text",
-              text: `Analyze this furniture image. The real dimensions provided by the user are: Width: ${dimensions.width}cm, Height: ${dimensions.height}cm, Depth: ${dimensions.depth}cm${dimensions.seatHeight ? `, Seat height: ${dimensions.seatHeight}cm` : ""}. Brand: ${brand}.
+              text: `Analiza la imagen del mueble y genera los datos para una ficha técnica profesional.
 
-Return ONLY a valid JSON object with this exact structure:
+Las dimensiones reales proporcionadas por el usuario son:
+- Ancho: ${dimensions.width} cm
+- Alto: ${dimensions.height} cm
+- Profundidad: ${dimensions.depth} cm
+${dimensions.seatHeight ? `- Altura del asiento: ${dimensions.seatHeight} cm` : ""}
+Marca: ${brand}
+
+Devuelve SOLO un objeto JSON válido con esta estructura exacta (bilingüe, métrico e imperial):
+
 {
-  "productType": "detected type (chair, table, sofa, etc.)",
-  "style": "detected style",
+  "productType": "<tipo de producto en español>",
+  "style": "<estilo en español>",
   "material": {
-    "main": "main material",
-    "details": ["detail1", "detail2"]
+    "main": "<material principal en español>",
+    "details": ["<detalle 1>", "<detalle 2>"]
   },
-  "finish": "finish description",
-  "feature": "most distinctive feature",
+  "finish": "<acabado en español>",
+  "feature": "<característica distintiva en español>",
   "dimensions": {
     "height": ${dimensions.height},
     "width": ${dimensions.width},
     "depth": ${dimensions.depth},
     "seatHeight": ${dimensions.seatHeight || null}
   },
-  "weight": estimated_weight_in_kg,
+  "weight": <peso estimado en kg>,
   "annotations": [
-    "annotation about material/joinery",
-    "annotation about texture/finish",
-    "annotation about functional detail"
+    "<anotación sobre material/union en español>",
+    "<anotación sobre textura/acabado en español>",
+    "<anotación sobre detalle funcional en español>"
   ],
   "colorPalette": {
-    "primary": "#hex of main material color",
-    "primaryName": "color name",
-    "secondary": "#hex of secondary color",
-    "secondaryName": "color name",
+    "primary": "<hex del color principal del material>",
+    "primaryName": "<nombre del color en español>",
+    "secondary": "<hex del color secundario>",
+    "secondaryName": "<nombre del color secundario en español>",
     "pearlGray": "#E5E5E5",
     "darkGray": "#4A4A4A"
   },
   "brand": "${brand}",
-  "productName": "suggested product name",
-  "renderViews": ["front", "side", "top", "perspective"]
+  "productName": "<nombre sugerido del producto en español>",
+  "renderViews": ["frontal", "lateral", "superior", "perspectiva"]
 }
 
-Use the user-provided dimensions exactly. Estimate weight based on material and size. Extract colors from the image.`,
+Usa las dimensiones proporcionadas por el usuario exactamente. Estima el peso basándote en el material y tamaño. Extrae los colores de la imagen. Todo en español.`,
             },
           ],
         },
@@ -72,18 +80,14 @@ Use the user-provided dimensions exactly. Estimate weight based on material and 
 
     // Parse the response
     const content = analysis.choices[0]?.message?.content || "";
-    // Try to extract JSON from the response
     let data;
     try {
-      // Try direct parse first
       data = JSON.parse(content);
     } catch {
-      // Try to extract JSON from markdown code blocks
-      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      const jsonMatch = content.match(/```(?:json)?\\s*([\\s\\S]*?)```/);
       if (jsonMatch) {
         data = JSON.parse(jsonMatch[1].trim());
       } else {
-        // Try to find JSON object in the text
         const objMatch = content.match(/\{[\s\S]*\}/);
         if (objMatch) {
           data = JSON.parse(objMatch[0]);
@@ -96,7 +100,8 @@ Use the user-provided dimensions exactly. Estimate weight based on material and 
     return NextResponse.json({ data });
   } catch (error: unknown) {
     console.error("Error analyzing photo:", error);
-    const message = error instanceof Error ? error.message : "Error analyzing photo";
+    const message =
+      error instanceof Error ? error.message : "Error analyzing photo";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

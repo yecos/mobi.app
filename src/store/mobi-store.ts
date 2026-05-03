@@ -34,48 +34,23 @@ export interface FurnitureData {
   renderViews: string[];
 }
 
-export interface LayoutField {
+export interface GridField {
   id: string;
+  label: string;
+  cells: string;
+  // Percentage-based positioning (responsive)
+  xPct: number;
+  yPct: number;
+  wPct: number;
+  hPct: number;
+  // Pixel-based (for export canvas)
   x: number;
   y: number;
   w: number;
   h: number;
-  fontSize: number;
-  fontWeight?: string;
-  align?: "left" | "center" | "right";
-  type: "text" | "number" | "color" | "label";
-  unit?: string;
-  editable: boolean;
-}
-
-export interface FichaLayout {
-  width: number;
-  height: number;
-  brand: LayoutField;
-  sheetTitle: LayoutField;
-  productName: LayoutField;
-  views: { id: string; x: number; y: number; w: number; h: number }[];
-  dimensions: {
-    id: string;
-    x1: number;
-    y1: number;
-    x2: number;
-    y2: number;
-    valueX: number;
-    valueY: number;
-    arrowDir: "h" | "v";
-  }[];
-  fields: LayoutField[];
-  annotations: LayoutField[];
-  palette: {
-    id: string;
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-    labelX: number;
-    labelY: number;
-  }[];
+  fontSize: "small" | "medium" | "large";
+  bold: boolean;
+  type: "text" | "number";
 }
 
 export interface ExtraElement {
@@ -123,12 +98,17 @@ interface MobiStore {
   // AI Generated
   furnitureData: FurnitureData | null;
   referenceImage: string | null; // Image A: ficha completa con texto
-  canvasImage: string | null; // Image B: ficha sin texto
-  fichaLayout: FichaLayout | null;
   setFurnitureData: (data: FurnitureData) => void;
   setReferenceImage: (img: string | null) => void;
-  setCanvasImage: (img: string | null) => void;
-  setFichaLayout: (layout: FichaLayout) => void;
+
+  // Grid-detected fields (replaces FichaLayout)
+  gridFields: GridField[];
+  sheetBgColor: string;
+  imgWidth: number;
+  imgHeight: number;
+  setGridFields: (fields: GridField[]) => void;
+  setSheetBgColor: (color: string) => void;
+  setImgDimensions: (w: number, h: number) => void;
 
   // Editable fields (values the user can modify)
   editedData: FurnitureData | null;
@@ -170,8 +150,10 @@ const initialState = {
   manualJsData: "",
   furnitureData: null as FurnitureData | null,
   referenceImage: null as string | null,
-  canvasImage: null as string | null,
-  fichaLayout: null as FichaLayout | null,
+  gridFields: [] as GridField[],
+  sheetBgColor: "#E5E5E5",
+  imgWidth: 1024,
+  imgHeight: 1536,
   editedData: null as FurnitureData | null,
   extras: [] as ExtraElement[],
   generatingStep: null as string | null,
@@ -223,8 +205,11 @@ export const useMobiStore = create<MobiStore>((set) => ({
   // AI Generated
   setFurnitureData: (data) => set({ furnitureData: data, editedData: JSON.parse(JSON.stringify(data)) }),
   setReferenceImage: (img) => set({ referenceImage: img }),
-  setCanvasImage: (img) => set({ canvasImage: img }),
-  setFichaLayout: (layout) => set({ fichaLayout: layout }),
+
+  // Grid fields
+  setGridFields: (fields) => set({ gridFields: fields }),
+  setSheetBgColor: (color) => set({ sheetBgColor: color }),
+  setImgDimensions: (w, h) => set({ imgWidth: w, imgHeight: h }),
 
   // Editable fields
   updateField: (path, value) =>

@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef } from "react";
-import { useMobiStore } from "@/store/mobi-store";
-import { getFieldLabels } from "@/lib/ficha-layouts";
+import { useMobiStore, type GridField } from "@/store/mobi-store";
 import FichaCanvas from "./ficha-canvas";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,7 +10,6 @@ import {
   ArrowLeft,
   Download,
   FileImage,
-  FileText,
   Copy,
   Printer,
 } from "lucide-react";
@@ -19,27 +17,68 @@ import { toast } from "sonner";
 
 export default function ExportPhase() {
   const setPhase = useMobiStore((s) => s.setPhase);
-  const canvasImage = useMobiStore((s) => s.canvasImage);
+  const referenceImage = useMobiStore((s) => s.referenceImage);
   const editedData = useMobiStore((s) => s.editedData);
-  const fichaLayout = useMobiStore((s) => s.fichaLayout);
+  const gridFields = useMobiStore((s) => s.gridFields);
+  const sheetBgColor = useMobiStore((s) => s.sheetBgColor);
+  const imgWidth = useMobiStore((s) => s.imgWidth);
+  const imgHeight = useMobiStore((s) => s.imgHeight);
   const extras = useMobiStore((s) => s.extras);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const labels = useMemo(() => getFieldLabels(), []);
-
   /**
-   * Compose the ficha on a hidden canvas: background image + text overlays.
+   * Get a field value for export canvas rendering.
    */
-  const composeCanvas = useCallback(async (): Promise<HTMLCanvasElement | null> => {
-    if (!canvasImage || !fichaLayout || !editedData) return null;
+  function getExportValue(fieldId: string, data: Record<string, unknown>): string {
+    if (fieldId === "brand") return String(data.brand ?? "");
+    if (fieldId === "sheetTitle") return "FICHA TÉCNICA";
+    if (fieldId === "productType") return String(data.productType ?? "");
 
-    const LAYOUT_W = fichaLayout.width;
-    const LAYOUT_H = fichaLayout.height;
+    const key = fieldId.replace("f-", "");
+    switch (key) {
+      case "style":
+        return String(data.style ?? "");
+      case "material":
+        return String((data.material as Record<string, unknown>)?.main ?? "");
+      case "finish":
+        return String(data.finish ?? "");
+      case "feature":
+        return String(data.feature ?? "");
+      case "width":
+        return String((data.dimensions as Record<string, unknown>)?.width ?? "");
+      case "height":
+        return String((data.dimensions as Record<string, unknown>)?.height ?? "");
+      case "depth":
+        return String((data.dimensions as Record<string, unknown>)?.depth ?? "");
+      case "seatHeight":
+        return String((data.dimensions as Record<string, unknown>)?.seatHeight ?? "");
+      case "weight":
+        return String(data.weight ?? "");
+      default:
+        if (fieldId.startsWith("ann-")) {
+          const idx = parseInt(fieldId.replace("ann-", ""), 10) - 1;
+          const annotations = data.annotations as string[] | undefined;
+          return annotations?.[idx] ?? "";
+        }
+        return "";
+    }
+  }
+
+  function fontSizeToPx(size: "small" | "medium" | "large"): number {
+    switch (size) {
+      case "small": return 10;
+      case "medium": return 14;
+      case "large": return 20;
+    }
+  }
+
+  const composeCanvas = useCallback(async (): Promise<HTMLCanvasElement | null> => {
+    if (!referenceImage || gridFields.length === 0 || !editedData) return null;
 
     const canvas = document.createElement("canvas");
-    canvas.width = LAYOUT_W;
-    canvas.height = LAYOUT_H;
+    canvas.width = imgWidth;
+    canvas.height = imgHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
 
@@ -49,46 +88,25 @@ export default function ExportPhase() {
     await new Promise<void>((resolve, reject) => {
       bgImg.onload = () => resolve();
       bgImg.onerror = reject;
-      bgImg.src = canvasImage;
+      bgImg.src = referenceImage;
     });
-    ctx.drawImage(bgImg, 0, 0, LAYOUT_W, LAYOUT_H);
+    ctx.drawImage(bgImg, 0, 0, imgWidth, imgHeight);
 
-    // Helper to draw text at field position
-    const drawField = (
-      fieldId: string,
-      field: { x: number; y: number; w: number; h: number; fontSize: number; align?: string; type: string; unit?: string }
-    ) => {
-      if (field.type === "label") {
-        const labelText = labels[`f-${fieldId.replace("l-", "")}`] ?? "";
-        ctx.font = `${field.fontSize}px sans-serif`;
-        ctx.fillStyle = "rgba(100, 100, 100, 0.7)";
-        ctx.textAlign = (field.align as CanvasTextAlign) ?? "left";
-        ctx.textBaseline = "top";
-        ctx.fillText(labelText, field.x, field.y);
-        return;
-      }
+    // Draw each field — paint bg color rect then text on top
+    for (const field of gridFields) {
+      const value = getExportValue(field.id, editedData as unknown as Record<string, unknown>);
+      if (!value) continue;
 
-      const value = getExportValue(fieldId, editedData as unknown as Record<string, unknown>);
-      if (!value) return;
+      // Paint background color rect to cover original text
+      ctx.fillStyle = sheetBgColor;
+      ctx.fillRect(field.x, field.y, field.w, field.h);
 
-      const displayValue = field.unit ? `${value} ${field.unit}` : value;
-      ctx.font = `${field.fontSize}px sans-serif`;
+      // Draw the edited text
+      const pxSize = fontSizeToPx(field.fontSize);
+      ctx.font = `${field.bold ? "bold " : ""}${pxSize}px sans-serif`;
       ctx.fillStyle = "#1a1a1a";
-      ctx.textAlign = (field.align as CanvasTextAlign) ?? "left";
       ctx.textBaseline = "top";
-      ctx.fillText(displayValue, field.x, field.y + 2);
-    };
-
-    // Draw all fields
-    drawField("brand", fichaLayout.brand);
-    drawField("sheetTitle", fichaLayout.sheetTitle);
-    drawField("productName", fichaLayout.productName);
-
-    for (const field of fichaLayout.fields) {
-      drawField(field.id, field);
-    }
-    for (const field of fichaLayout.annotations) {
-      drawField(field.id, field);
+      ctx.fillText(value, field.x + 2, field.y + 2);
     }
 
     // Draw extras
@@ -103,28 +121,38 @@ export default function ExportPhase() {
               extraImg.onerror = reject;
               extraImg.src = extra.data;
             });
-            ctx.drawImage(extraImg, extra.x, extra.y, extra.w, extra.h);
+            // Convert percentage-based position to pixels
+            const ex = (extra.x / 100) * imgWidth;
+            const ey = (extra.y / 100) * imgHeight;
+            const ew = (extra.w / 1024) * imgWidth;
+            const eh = (extra.h / 1536) * imgHeight;
+            ctx.drawImage(extraImg, ex, ey, ew, eh);
           } catch {
             // Skip invalid images
           }
         }
       } else if (extra.type === "text") {
+        const ex = (extra.x / 100) * imgWidth;
+        const ey = (extra.y / 100) * imgHeight;
         ctx.font = `${extra.fontSize ?? 16}px sans-serif`;
         ctx.fillStyle = "#1a1a1a";
-        ctx.textAlign = "left";
         ctx.textBaseline = "top";
-        ctx.fillText(extra.data, extra.x, extra.y);
+        ctx.fillText(extra.data, ex, ey);
       } else if (extra.type === "stamp") {
+        const ex = (extra.x / 100) * imgWidth;
+        const ey = (extra.y / 100) * imgHeight;
+        const ew = (extra.w / 1024) * imgWidth;
+        const eh = (extra.h / 1536) * imgHeight;
         ctx.font = "bold 14px sans-serif";
         ctx.fillStyle = "#4a4a4a";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText("✓ APROBADO", extra.x + extra.w / 2, extra.y + extra.h / 2);
+        ctx.fillText("✓ APROBADO", ex + ew / 2, ey + eh / 2);
       }
     }
 
     return canvas;
-  }, [canvasImage, fichaLayout, editedData, extras, labels]);
+  }, [referenceImage, gridFields, editedData, extras, sheetBgColor, imgWidth, imgHeight]);
 
   const handleDownloadPNG = useCallback(async () => {
     try {
@@ -292,58 +320,4 @@ export default function ExportPhase() {
       </main>
     </div>
   );
-}
-
-/**
- * Get a field value for export canvas rendering.
- */
-function getExportValue(
-  fieldId: string,
-  editedData: Record<string, unknown>
-): string {
-  if (fieldId === "brand") return String(editedData.brand ?? "");
-  if (fieldId === "sheetTitle") return "FICHA TÉCNICA";
-  if (fieldId === "productName") return String(editedData.productName ?? "");
-
-  const key = fieldId.replace("f-", "");
-  switch (key) {
-    case "productType":
-      return String(editedData.productType ?? "");
-    case "style":
-      return String(editedData.style ?? "");
-    case "material":
-      return String(
-        (editedData.material as Record<string, unknown>)?.main ?? ""
-      );
-    case "finish":
-      return String(editedData.finish ?? "");
-    case "feature":
-      return String(editedData.feature ?? "");
-    case "width":
-      return String(
-        (editedData.dimensions as Record<string, unknown>)?.width ?? ""
-      );
-    case "height":
-      return String(
-        (editedData.dimensions as Record<string, unknown>)?.height ?? ""
-      );
-    case "depth":
-      return String(
-        (editedData.dimensions as Record<string, unknown>)?.depth ?? ""
-      );
-    case "seatHeight":
-      return String(
-        (editedData.dimensions as Record<string, unknown>)?.seatHeight ?? ""
-      );
-    case "weight":
-      return String(editedData.weight ?? "");
-    default:
-      // Annotations
-      if (fieldId.startsWith("ann-")) {
-        const idx = parseInt(fieldId.replace("ann-", ""), 10) - 1;
-        const annotations = editedData.annotations as string[] | undefined;
-        return annotations?.[idx] ?? "";
-      }
-      return "";
-  }
 }
