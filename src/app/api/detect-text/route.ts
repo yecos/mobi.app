@@ -19,7 +19,8 @@ interface DetectResult {
 }
 
 /**
- * Ultra-robust JSON parser that handles all VLM output formats.
+ * Ultra-robust JSON parser that handles all VLM output formats,
+ * including truncated responses where the JSON is cut off mid-stream.
  */
 function robustJSONParse(raw: string): unknown {
   const cleaned = raw.trim();
@@ -51,16 +52,44 @@ function robustJSONParse(raw: string): unknown {
       try { return JSON.parse(extracted); } catch {}
     }
 
-    // 4. Truncated JSON — try to fix
+    // 4. Truncated JSON — sophisticated repair
     if (lastValidEnd === -1) {
-      const partial = cleaned.slice(firstBrace).replace(/,\s*([}\]])/g, "$1");
-      let fixed = partial.trimEnd().replace(/,\s*"[^"]*"?\s*$/, "").replace(/,\s*$/, "");
-      const openBraces = (fixed.match(/{/g) || []).length;
-      const closeBraces = (fixed.match(/}/g) || []).length;
-      const openBrackets = (fixed.match(/\[/g) || []).length;
-      const closeBrackets = (fixed.match(/]/g) || []).length;
-      for (let i = 0; i < openBrackets - closeBrackets; i++) fixed += "]";
-      for (let i = 0; i < openBraces - closeBraces; i++) fixed += "}";
+      const partial = cleaned.slice(firstBrace);
+
+      // Strategy A: Find the last COMPLETE object in the array
+      // Look for the last "}," or "}" pattern that closes an object inside the array
+      const lastCompleteObj = partial.lastIndexOf("}");
+      if (lastCompleteObj > 0) {
+        // Check if there's a comma after it (inside the array) — include the }
+        let truncEnd = lastCompleteObj + 1;
+        const afterClose = partial.slice(truncEnd).trimStart();
+        if (afterClose.startsWith(",")) {
+          truncEnd += afterClose.indexOf(",") + 1;
+        }
+        let fixed = partial.slice(0, truncEnd);
+        // Remove trailing comma before closing bracket
+        fixed = fixed.replace(/,\s*$/, "");
+        // Count open/close brackets
+        const openBraces = (fixed.match(/{/g) || []).length;
+        const closeBraces = (fixed.match(/}/g) || []).length;
+        const openBrackets = (fixed.match(/\[/g) || []).length;
+        const closeBrackets = (fixed.match(/]/g) || []).length;
+        for (let i = 0; i < openBrackets - closeBrackets; i++) fixed += "]";
+        for (let i = 0; i < openBraces - closeBraces; i++) fixed += "}";
+        try { return JSON.parse(fixed); } catch {}
+      }
+
+      // Strategy B: Remove incomplete last entry and close
+      let fixed = partial.trimEnd();
+      // Remove trailing incomplete key-value pair
+      fixed = fixed.replace(/,\s*"[^"]*"?\s*:?\s*$/, "");
+      fixed = fixed.replace(/,\s*$/, "");
+      const openBraces2 = (fixed.match(/{/g) || []).length;
+      const closeBraces2 = (fixed.match(/}/g) || []).length;
+      const openBrackets2 = (fixed.match(/\[/g) || []).length;
+      const closeBrackets2 = (fixed.match(/]/g) || []).length;
+      for (let i = 0; i < openBrackets2 - closeBrackets2; i++) fixed += "]";
+      for (let i = 0; i < openBraces2 - closeBraces2; i++) fixed += "}";
       try { return JSON.parse(fixed); } catch {}
     }
   }
@@ -138,7 +167,7 @@ Return ONLY a valid JSON object with this exact structure:
           ],
         },
       ],
-      max_completion_tokens: 4096,
+      max_completion_tokens: 16384,
       response_format: { type: "json_object" },
     });
 
