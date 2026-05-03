@@ -77,7 +77,7 @@ export default function EditingPhase() {
       </header>
 
       <div className="flex-1 flex flex-col lg:flex-row">
-        {/* Canvas */}
+        {/* Canvas area */}
         <div className="flex-1 p-4 flex flex-col items-center overflow-auto bg-muted/10">
           <div className="w-full max-w-2xl mb-3 flex items-center gap-3">
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale(Math.max(25, scale - 10))}>
@@ -89,7 +89,8 @@ export default function EditingPhase() {
             </Button>
             <span className="text-xs text-muted-foreground w-12 text-right">{scale}%</span>
           </div>
-          <div className="w-full max-w-2xl origin-top transition-transform duration-200">
+          {/* Canvas with zoom via width, not transform */}
+          <div style={{ width: `${scale}%`, maxWidth: "none" }} className="origin-top-left">
             <FichaCanvas inlineEditing={true} showDebug={showDebug} />
           </div>
           <p className="text-xs text-muted-foreground mt-3">{editedRegions.length} campos de texto detectados</p>
