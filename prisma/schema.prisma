@@ -1,0 +1,113 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// Core furniture piece — a chair, table, sofa, etc.
+model Furniture {
+  id          String   @id @default(cuid())
+  slug        String   @unique                    // URL-friendly identifier e.g. "nara-oak-dining-chair"
+  name        String                              // Display name e.g. "Nara Oak Dining Chair"
+  description String                              // Rich markdown description
+  designer    String?                             // Designer or brand name
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+
+  // --- Pricing ---
+  basePrice   Float                               // Base price in USD
+  salePrice   Float?                              // Optional sale/discounted price
+
+  // --- Dimensions (cm) ---
+  widthCm     Float
+  depthCm     Float
+  heightCm    Float
+  seatHeightCm Float?                             // Applicable for seating
+  weightKg    Float
+
+  // --- Core material ---
+  primaryMaterial String                          // e.g. "Solid Oak", "Walnut Veneer"
+
+  // --- 3D Model ---
+  modelPath   String                              // Path to .glb/.gltf in /public/models/
+  thumbnailPath String                            // Path to thumbnail image in /public/images/
+
+  // --- Flags ---
+  isNew       Boolean  @default(false)
+  isFeatured  Boolean  @default(false)
+  inStock     Boolean  @default(true)
+
+  // --- Timestamps ---
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // --- Relations ---
+  variants    FurnitureVariant[]
+  images      FurnitureImage[]
+  tags        FurnitureTag[]
+
+  @@index([categoryId])
+  @@index([slug])
+  @@index([isFeatured])
+}
+
+/// Color/material variant of a furniture piece
+model FurnitureVariant {
+  id          String   @id @default(cuid())
+  furnitureId String
+  furniture   Furniture @relation(fields: [furnitureId], references: [id], onDelete: Cascade)
+
+  name        String                              // e.g. "Natural Oak", "Walnut Stain", "Matte Black"
+  colorHex    String                              // Primary hex color e.g. "#C4A882"
+  materialSwatch String?                          // Optional texture swatch image path
+  modelPath   String?                             // Optional override .glb if geometry differs (rare)
+  priceOffset Float    @default(0)                // Price delta from base (can be negative)
+  inStock     Boolean  @default(true)
+
+  @@index([furnitureId])
+}
+
+/// Additional gallery images
+model FurnitureImage {
+  id          String   @id @default(cuid())
+  furnitureId String
+  furniture   Furniture @relation(fields: [furnitureId], references: [id], onDelete: Cascade)
+
+  url         String                              // Image path in /public/images/
+  alt         String?                             // Alt text
+  sortOrder   Int      @default(0)
+
+  @@index([furnitureId])
+}
+
+/// Tags for search/filter (e.g. "Scandinavian", "Mid-Century", "Outdoor")
+model FurnitureTag {
+  id          String   @id @default(cuid())
+  furnitureId String
+  furniture   Furniture @relation(fields: [furnitureId], references: [id], onDelete: Cascade)
+
+  name        String
+
+  @@unique([furnitureId, name])
+  @@index([furnitureId])
+  @@index([name])
+}
+
+/// Category tree (e.g. "Chairs" > "Dining Chairs")
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique                    // e.g. "Dining Chairs"
+  slug        String   @unique                    // e.g. "dining-chairs"
+  parentId    String?
+  parent      Category? @relation("CategoryTree", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryTree")
+  icon        String?                             // Lucide icon name for the category
+
+  furniture   Furniture[]
+
+  @@index([parentId])
+  @@index([slug])
+}
