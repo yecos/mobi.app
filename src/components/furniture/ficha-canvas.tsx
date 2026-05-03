@@ -202,7 +202,7 @@ function TextRegionInput({
             display: "block",
             boxSizing: "border-box",
             WebkitAppearance: "none",
-            appearance: "none" as string,
+            appearance: "none" as unknown as undefined,
           }}
           autoFocus={isActive}
         />
