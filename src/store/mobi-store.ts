@@ -173,7 +173,7 @@ function setPathValue(obj: Record<string, any>, path: string, value: unknown): R
     if (current[keys[i]] === undefined) {
       current[keys[i]] = {};
     }
-    current = current[keys[i]];
+    current = current[keys[i]] as Record<string, unknown>;
   }
   current[keys[keys.length - 1]] = value;
   return result;
@@ -205,7 +205,7 @@ export const useMobiStore = create<MobiStore>((set) => ({
   updateField: (path, value) =>
     set((state) => {
       if (!state.editedData) return {};
-      const updated = setPathValue(state.editedData, path, value);
+      const updated = setPathValue(state.editedData, path, value) as unknown as FurnitureData;
       return { editedData: updated };
     }),
 

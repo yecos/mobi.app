@@ -68,7 +68,7 @@ export default function ExportPhase() {
         return;
       }
 
-      const value = getExportValue(fieldId, editedData as Record<string, unknown>);
+      const value = getExportValue(fieldId, editedData as unknown as Record<string, unknown>);
       if (!value) return;
 
       const displayValue = field.unit ? `${value} ${field.unit}` : value;

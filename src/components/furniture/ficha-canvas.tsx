@@ -244,7 +244,7 @@ export default function FichaCanvas({
 
         const isActive = activeFieldId === field.id;
         const value = editedData
-          ? getFieldValue(field.id, editedData as Record<string, unknown>)
+          ? getFieldValue(field.id, editedData as unknown as Record<string, unknown>)
           : "";
 
         return (

@@ -300,9 +300,11 @@ export default function EditingPhase() {
                         <Input
                           type="number"
                           value={
-                            (editedData.dimensions as Record<string, unknown>)?.[
-                              key
-                            ] ?? ""
+                            String(
+                              (editedData.dimensions as unknown as Record<string, unknown>)?.[
+                                key
+                              ] ?? ""
+                            )
                           }
                           onChange={(e) =>
                             updateField(
