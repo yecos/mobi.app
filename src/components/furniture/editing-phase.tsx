@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
-import { useMobiStore, type ExtraElement } from "@/store/mobi-store";
-import { getFieldLabels } from "@/lib/ficha-layouts";
+import { useMemo, useState } from "react";
+import { useMobiStore, type TextRegion } from "@/store/mobi-store";
 import FichaCanvas from "./ficha-canvas";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,140 +9,43 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowLeft,
-  Eye,
   Download,
-  Plus,
-  Trash2,
-  Paperclip,
+  ZoomIn,
+  ZoomOut,
   Type,
-  Stamp,
-  Copy,
 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function EditingPhase() {
   const setPhase = useMobiStore((s) => s.setPhase);
-  const editedData = useMobiStore((s) => s.editedData);
-  const updateField = useMobiStore((s) => s.updateField);
-  const extras = useMobiStore((s) => s.extras);
-  const addExtra = useMobiStore((s) => s.addExtra);
-  const removeExtra = useMobiStore((s) => s.removeExtra);
-  const furnitureData = useMobiStore((s) => s.furnitureData);
-  const gridPositions = useMobiStore((s) => s.gridPositions);
+  const editedRegions = useMobiStore((s) => s.editedRegions);
+  const activeFieldId = useMobiStore((s) => s.activeFieldId);
+  const setActiveFieldId = useMobiStore((s) => s.setActiveFieldId);
+  const updateRegion = useMobiStore((s) => s.updateRegion);
+  const scale = useMobiStore((s) => s.scale);
+  const setScale = useMobiStore((s) => s.setScale);
+  const detectionResult = useMobiStore((s) => s.detectionResult);
 
-  const [scale, setScale] = useState(100);
-  const [activeFieldId, setActiveFieldId] = useState<string | null>(null);
-  const [newAnnotation, setNewAnnotation] = useState("");
-  const [jsCopied, setJsCopied] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
 
-  // Get editable fields only
-  const editableFields = useMemo(() => {
-    if (!gridPositions) return [];
-    return gridPositions.fields.filter((f) => f.editable);
-  }, [gridPositions]);
-
-  // Field labels derived from grid field text, with fallback to getFieldLabels()
-  const fieldLabels = useMemo(() => {
-    const fallbackLabels = getFieldLabels();
-    const map: Record<string, string> = {};
-    for (const f of editableFields) {
-      map[f.id] = f.text || fallbackLabels[f.id] || f.id;
-    }
-    return map;
-  }, [editableFields]);
-
-  const handleUpdateAnnotation = useCallback(
-    (index: number, value: string) => {
-      if (!editedData) return;
-      const current = [...(editedData.annotations ?? [])];
-      current[index] = value;
-      updateField("annotations", current);
-    },
-    [editedData, updateField]
-  );
-
-  const handleDeleteAnnotation = useCallback(
-    (index: number) => {
-      if (!editedData) return;
-      const current = [...(editedData.annotations ?? [])];
-      current.splice(index, 1);
-      updateField("annotations", current);
-    },
-    [editedData, updateField]
-  );
-
-  const handleAddAnnotation = useCallback(() => {
-    if (!editedData || !newAnnotation.trim()) return;
-    const current = [...(editedData.annotations ?? []), newAnnotation.trim()];
-    updateField("annotations", current);
-    setNewAnnotation("");
-  }, [editedData, newAnnotation, updateField]);
-
-  const handleAddExtra = useCallback(
-    (type: ExtraElement["type"]) => {
-      const id = `extra-${Date.now()}`;
-      const defaults: Omit<ExtraElement, "id" | "type"> = {
-        data: type === "text" ? "Texto nuevo" : "",
-        x: 100,
-        y: 100,
-        w: 150,
-        h: type === "text" ? 40 : 120,
-        fontSize: 16,
-      };
-      addExtra({ id, type, ...defaults });
-      toast.success("Elemento añadido al lienzo");
-    },
-    [addExtra]
-  );
-
-  const handleImageExtraUpload = useCallback(
-    (extraId: string) => {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "image/*";
-      input.onchange = (e) => {
-        const file = (e.target as HTMLInputElement).files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          const result = ev.target?.result as string;
-          useMobiStore.getState().updateExtra(extraId, { data: result });
-        };
-        reader.readAsDataURL(file);
-      };
-      input.click();
-    },
-    []
-  );
-
-  // Generate JS output
-  const jsOutput = useMemo(() => {
-    if (!editedData) return "";
-    return JSON.stringify(
-      {
-        ...editedData,
-        extras: extras.length > 0 ? extras : undefined,
-      },
-      null,
-      2
+  const filteredRegions = useMemo(() => {
+    if (!searchTerm.trim()) return editedRegions;
+    const lower = searchTerm.toLowerCase();
+    return editedRegions.filter(
+      (r) =>
+        r.text.toLowerCase().includes(lower) ||
+        r.id.toLowerCase().includes(lower)
     );
-  }, [editedData, extras]);
+  }, [editedRegions, searchTerm]);
 
-  const handleCopyJs = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(jsOutput);
-      setJsCopied(true);
-      toast.success("JS copiado al portapapeles");
-      setTimeout(() => setJsCopied(false), 2000);
-    } catch {
-      toast.error("Error al copiar");
-    }
-  }, [jsOutput]);
+  const activeRegion = useMemo(
+    () => editedRegions.find((r) => r.id === activeFieldId) ?? null,
+    [editedRegions, activeFieldId]
+  );
 
-  if (!editedData || !gridPositions || editableFields.length === 0) {
+  if (!detectionResult || editedRegions.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p className="text-muted-foreground">Sin datos para editar</p>
@@ -160,7 +62,7 @@ export default function EditingPhase() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setPhase("review")}
+              onClick={() => setPhase("input")}
               className="gap-1.5"
             >
               <ArrowLeft className="h-4 w-4" />
@@ -170,20 +72,11 @@ export default function EditingPhase() {
             <h1 className="text-lg font-bold">
               <span className="text-primary">Mobili</span>{" "}
               <span className="text-muted-foreground font-normal text-sm">
-                — Editor de Ficha Técnica
+                — Editor de Texto
               </span>
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPhase("export")}
-              className="gap-1.5"
-            >
-              <Eye className="h-4 w-4" />
-              Vista Previa
-            </Button>
             <Button
               size="sm"
               onClick={() => setPhase("export")}
@@ -200,381 +93,241 @@ export default function EditingPhase() {
       <div className="flex-1 flex flex-col lg:flex-row">
         {/* Left: Canvas */}
         <div className="flex-1 p-4 flex flex-col items-center overflow-auto bg-muted/10">
-          {/* Scale control */}
+          {/* Zoom controls */}
           <div className="w-full max-w-2xl mb-3 flex items-center gap-3">
-            <span className="text-xs text-muted-foreground w-12 text-right">
-              {scale}%
-            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setScale(Math.max(25, scale - 10))}
+            >
+              <ZoomOut className="h-4 w-4" />
+            </Button>
             <Slider
               value={[scale]}
               min={25}
-              max={150}
+              max={200}
               step={5}
               onValueChange={([v]) => setScale(v)}
               className="flex-1"
             />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setScale(Math.min(200, scale + 10))}
+            >
+              <ZoomIn className="h-4 w-4" />
+            </Button>
+            <span className="text-xs text-muted-foreground w-12 text-right">
+              {scale}%
+            </span>
           </div>
 
           {/* Canvas area */}
-          <div
-            className="w-full max-w-2xl origin-top transition-transform duration-200"
-            style={{ transform: `scale(${scale / 100})` }}
-          >
-            <FichaCanvas
-              scale={scale}
-              onScaleChange={setScale}
-              activeFieldId={activeFieldId}
-              onFieldClick={setActiveFieldId}
-            />
+          <div className="w-full max-w-2xl origin-top transition-transform duration-200">
+            <FichaCanvas inlineEditing={true} />
           </div>
+
+          {/* Region count */}
+          <p className="text-xs text-muted-foreground mt-3">
+            {editedRegions.length} campos de texto detectados
+          </p>
         </div>
 
         {/* Right: Editing panel */}
         <div className="w-full lg:w-80 xl:w-96 border-t lg:border-t-0 lg:border-l border-border/50 bg-background">
           <ScrollArea className="h-[calc(100vh-3.5rem)]">
             <div className="p-4 space-y-5">
-              {/* ── Información ── */}
-              <section>
-                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                  Información
-                </h3>
-                <div className="space-y-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">{fieldLabels["f-productType"] || "Tipo"}</Label>
-                    <Input
-                      value={editedData.productType ?? ""}
-                      onChange={(e) => updateField("productType", e.target.value)}
-                      onFocus={() => setActiveFieldId("f-productType")}
-                      className="h-8 text-sm"
-                    />
+              {/* ── Active Field Detail ── */}
+              {activeRegion && (
+                <section className="p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Type className="h-4 w-4 text-primary" />
+                    <h3 className="text-xs font-semibold text-primary uppercase tracking-wider">
+                      Campo activo
+                    </h3>
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">{fieldLabels["f-style"] || "Estilo"}</Label>
-                    <Input
-                      value={editedData.style ?? ""}
-                      onChange={(e) => updateField("style", e.target.value)}
-                      onFocus={() => setActiveFieldId("f-style")}
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">{fieldLabels["f-material"] || "Material"}</Label>
-                    <Input
-                      value={editedData.material?.main ?? ""}
-                      onChange={(e) => updateField("material.main", e.target.value)}
-                      onFocus={() => setActiveFieldId("f-material")}
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">{fieldLabels["f-finish"] || "Acabado"}</Label>
-                    <Input
-                      value={editedData.finish ?? ""}
-                      onChange={(e) => updateField("finish", e.target.value)}
-                      onFocus={() => setActiveFieldId("f-finish")}
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">{fieldLabels["f-feature"] || "Característica"}</Label>
-                    <Input
-                      value={editedData.feature ?? ""}
-                      onChange={(e) => updateField("feature", e.target.value)}
-                      onFocus={() => setActiveFieldId("f-feature")}
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                </div>
-              </section>
-
-              <Separator />
-
-              {/* ── Dimensiones ── */}
-              <section>
-                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                  Dimensiones
-                </h3>
-                <div className="space-y-3">
-                  {(
-                    [
-                      { key: "width", label: fieldLabels["f-width"] || "Ancho", unit: "cm" },
-                      { key: "height", label: fieldLabels["f-height"] || "Alto", unit: "cm" },
-                      { key: "depth", label: fieldLabels["f-depth"] || "Profundidad", unit: "cm" },
-                      {
-                        key: "seatHeight",
-                        label: fieldLabels["f-seatHeight"] || "Alt. Asiento",
-                        unit: "cm",
-                      },
-                      { key: "weight", label: fieldLabels["f-weight"] || "Peso", unit: "kg" },
-                    ] as const
-                  ).map(({ key, label, unit }) => (
-                    <div key={key} className="space-y-1">
-                      <Label className="text-xs">{label}</Label>
-                      <div className="flex items-center gap-2">
+                  <div className="space-y-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Texto</Label>
+                      <Input
+                        value={activeRegion.text}
+                        onChange={(e) =>
+                          updateRegion(activeRegion.id, { text: e.target.value })
+                        }
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Tamaño (px)</Label>
                         <Input
                           type="number"
-                          value={
-                            String(
-                              (editedData.dimensions as unknown as Record<string, unknown>)?.[
-                                key
-                              ] ?? ""
-                            )
-                          }
+                          value={activeRegion.fontSize}
                           onChange={(e) =>
-                            updateField(
-                              `dimensions.${key}`,
-                              Number(e.target.value) || 0
-                            )
+                            updateRegion(activeRegion.id, {
+                              fontSize: Number(e.target.value) || 12,
+                            })
                           }
-                          onFocus={() => setActiveFieldId(`f-${key}`)}
                           className="h-8 text-sm"
                         />
-                        <span className="text-xs text-muted-foreground w-6">
-                          {unit}
-                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Color</Label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="color"
+                            value={activeRegion.color}
+                            onChange={(e) =>
+                              updateRegion(activeRegion.id, { color: e.target.value })
+                            }
+                            className="h-8 w-8 rounded border border-border cursor-pointer"
+                          />
+                          <Input
+                            value={activeRegion.color}
+                            onChange={(e) =>
+                              updateRegion(activeRegion.id, { color: e.target.value })
+                            }
+                            className="h-8 text-xs flex-1"
+                          />
+                        </div>
                       </div>
                     </div>
+                    <div className="flex items-center gap-2">
+                      <Label className="text-xs">Negrita</Label>
+                      <button
+                        onClick={() =>
+                          updateRegion(activeRegion.id, { bold: !activeRegion.bold })
+                        }
+                        className={`px-2 py-1 text-xs rounded border transition-colors ${
+                          activeRegion.bold
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-muted border-border hover:bg-muted/80"
+                        }`}
+                      >
+                        B
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              <Separator />
+
+              {/* ── Search ── */}
+              <div className="space-y-1">
+                <Input
+                  placeholder="Buscar texto..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="h-8 text-sm"
+                />
+              </div>
+
+              {/* ── All Fields List ── */}
+              <section>
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                  Campos detectados ({filteredRegions.length})
+                </h3>
+                <div className="space-y-1.5">
+                  {filteredRegions.map((region) => (
+                    <RegionListItem
+                      key={region.id}
+                      region={region}
+                      isActive={activeFieldId === region.id}
+                      onClick={() => setActiveFieldId(region.id)}
+                      onUpdate={(updates) => updateRegion(region.id, updates)}
+                    />
                   ))}
                 </div>
               </section>
 
               <Separator />
 
-              {/* ── Anotaciones ── */}
+              {/* ── Bulk Actions ── */}
               <section>
                 <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                  Anotaciones
+                  Acciones
                 </h3>
                 <div className="space-y-2">
-                  {(editedData.annotations ?? []).map((ann, index) => (
-                    <div key={index} className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground w-5">
-                        {["①","②","③","④","⑤","⑥","⑦","⑧","⑨","⑩"][index] ?? `${index + 1}.`}
-                      </span>
-                      <Input
-                        value={ann}
-                        onChange={(e) =>
-                          handleUpdateAnnotation(index, e.target.value)
-                        }
-                        className="h-8 text-sm flex-1"
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 flex-shrink-0"
-                        onClick={() => handleDeleteAnnotation(index)}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ))}
-                  <div className="flex items-center gap-2 mt-2">
-                    <Input
-                      value={newAnnotation}
-                      onChange={(e) => setNewAnnotation(e.target.value)}
-                      placeholder="Nueva anotación..."
-                      className="h-8 text-sm flex-1"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleAddAnnotation();
-                      }}
-                    />
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-7 w-7 flex-shrink-0"
-                      onClick={handleAddAnnotation}
-                      disabled={!newAnnotation.trim()}
-                    >
-                      <Plus className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-              </section>
-
-              <Separator />
-
-              {/* ── Colores ── */}
-              <section>
-                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                  Colores
-                </h3>
-                <div className="space-y-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Color primario</Label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={editedData.colorPalette?.primary ?? "#8B6914"}
-                        onChange={(e) =>
-                          updateField("colorPalette.primary", e.target.value)
-                        }
-                        className="h-8 w-8 rounded border border-border cursor-pointer"
-                      />
-                      <Input
-                        value={editedData.colorPalette?.primaryName ?? ""}
-                        onChange={(e) =>
-                          updateField("colorPalette.primaryName", e.target.value)
-                        }
-                        placeholder="Nombre del color"
-                        className="h-8 text-sm flex-1"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Color secundario</Label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={editedData.colorPalette?.secondary ?? "#D4C5A9"}
-                        onChange={(e) =>
-                          updateField("colorPalette.secondary", e.target.value)
-                        }
-                        className="h-8 w-8 rounded border border-border cursor-pointer"
-                      />
-                      <Input
-                        value={editedData.colorPalette?.secondaryName ?? ""}
-                        onChange={(e) =>
-                          updateField(
-                            "colorPalette.secondaryName",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Nombre del color"
-                        className="h-8 text-sm flex-1"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <Separator />
-
-              {/* ── Extras ── */}
-              <section>
-                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                  Extras
-                </h3>
-                <div className="grid grid-cols-2 gap-2 mb-3">
                   <Button
                     variant="outline"
                     size="sm"
-                    className="gap-1.5 h-8 text-xs"
-                    onClick={() => handleAddExtra("logo")}
+                    className="w-full text-xs gap-1.5"
+                    onClick={() => {
+                      // Reset all regions to original
+                      const original = detectionResult.regions;
+                      useMobiStore.getState().setEditedRegions(
+                        original.map((r) => ({ ...r }))
+                      );
+                      toast.success("Campos restaurados a valores originales");
+                    }}
                   >
-                    <Paperclip className="h-3 w-3" />
-                    Logo
+                    Restaurar texto original
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="gap-1.5 h-8 text-xs"
-                    onClick={() => handleAddExtra("stamp")}
+                    className="w-full text-xs gap-1.5"
+                    onClick={() => {
+                      setActiveFieldId(null);
+                      setScale(100);
+                    }}
                   >
-                    <Stamp className="h-3 w-3" />
-                    Sello
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5 h-8 text-xs"
-                    onClick={() => handleAddExtra("image")}
-                  >
-                    🖼️ Imagen
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5 h-8 text-xs"
-                    onClick={() => handleAddExtra("text")}
-                  >
-                    <Type className="h-3 w-3" />
-                    Texto
+                    Resetear zoom y selección
                   </Button>
                 </div>
-
-                {/* Existing extras */}
-                {extras.length > 0 && (
-                  <div className="space-y-2">
-                    {extras.map((extra) => (
-                      <div
-                        key={extra.id}
-                        className="flex items-center gap-2 p-2 rounded border border-border/50 bg-muted/30"
-                      >
-                        <span className="text-xs capitalize w-12">
-                          {extra.type === "logo"
-                            ? "📎"
-                            : extra.type === "stamp"
-                              ? "🔒"
-                              : extra.type === "image"
-                                ? "🖼️"
-                                : "✏️"}
-                        </span>
-                        {extra.type === "text" ? (
-                          <Input
-                            value={extra.data}
-                            onChange={(e) =>
-                              useMobiStore
-                                .getState()
-                                .updateExtra(extra.id, { data: e.target.value })
-                            }
-                            className="h-7 text-xs flex-1"
-                          />
-                        ) : extra.type === "image" || extra.type === "logo" ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-xs h-7 flex-1"
-                            onClick={() => handleImageExtraUpload(extra.id)}
-                          >
-                            Subir imagen
-                          </Button>
-                        ) : (
-                          <span className="text-xs text-muted-foreground flex-1">
-                            Sello de aprobación
-                          </span>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          onClick={() => removeExtra(extra.id)}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-
-              <Separator />
-
-              {/* ── JS Output ── */}
-              <section>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    Salida JS
-                  </h3>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 text-xs gap-1"
-                    onClick={handleCopyJs}
-                  >
-                    <Copy className="h-3 w-3" />
-                    {jsCopied ? "Copiado" : "Copiar JS"}
-                  </Button>
-                </div>
-                <Textarea
-                  readOnly
-                  value={jsOutput}
-                  className="font-mono text-xs h-40 resize-none"
-                />
               </section>
             </div>
           </ScrollArea>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * A compact list item for a text region in the side panel.
+ */
+function RegionListItem({
+  region,
+  isActive,
+  onClick,
+  onUpdate,
+}: {
+  region: TextRegion;
+  isActive: boolean;
+  onClick: () => void;
+  onUpdate: (updates: Partial<TextRegion>) => void;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      className={`
+        flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-all text-sm
+        ${
+          isActive
+            ? "bg-primary/10 border border-primary/30 text-primary"
+            : "hover:bg-muted/50 border border-transparent"
+        }
+      `}
+    >
+      <span
+        className="w-3 h-3 rounded-sm flex-shrink-0 border border-border/50"
+        style={{ backgroundColor: region.color }}
+      />
+      <Input
+        value={region.text}
+        onChange={(e) => onUpdate({ text: e.target.value })}
+        onClick={(e) => e.stopPropagation()}
+        className={`h-6 text-xs flex-1 border-none bg-transparent focus:bg-background p-0 px-1 ${
+          isActive ? "text-primary" : ""
+        }`}
+      />
+      <span className="text-[10px] text-muted-foreground flex-shrink-0">
+        {region.fontSize}px
+      </span>
     </div>
   );
 }

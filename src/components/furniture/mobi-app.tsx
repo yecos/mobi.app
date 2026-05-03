@@ -3,7 +3,6 @@
 import { useMobiStore } from "@/store/mobi-store";
 import InputPhase from "./input-phase";
 import GeneratingPhase from "./generating-phase";
-import ReviewPhase from "./review-phase";
 import EditingPhase from "./editing-phase";
 import ExportPhase from "./export-phase";
 import { AnimatePresence, motion } from "framer-motion";
@@ -17,8 +16,6 @@ export default function MobiApp() {
         return <InputPhase />;
       case "generating":
         return <GeneratingPhase />;
-      case "review":
-        return <ReviewPhase />;
       case "editing":
         return <EditingPhase />;
       case "export":

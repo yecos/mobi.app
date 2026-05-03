@@ -1,43 +1,25 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { useMobiStore, type FurnitureData } from "@/store/mobi-store";
+import { useMobiStore, type DetectionResult } from "@/store/mobi-store";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { motion } from "framer-motion";
-import {
-  Upload,
-  Sparkles,
-  Image as ImageIcon,
-  X,
-  Ruler,
-} from "lucide-react";
+import { Upload, Sparkles, Image as ImageIcon, X } from "lucide-react";
 import { toast } from "sonner";
 
-// ─── AI Mode ───────────────────────────────────────────
-function AIMode() {
+export default function InputPhase() {
   const {
     uploadedImage,
     uploadedImageName,
-    userDimensions,
-    userBrand,
-    userProductName,
     setUploadedImage,
-    setUserDimensions,
-    setUserBrand,
-    setUserProductName,
     setPhase,
-    setFurnitureData,
-    setReferenceImage,
-    setGridPositions,
+    setDetectionResult,
     setGeneratingStep,
     setError,
   } = useMobiStore();
 
   const [isDragOver, setIsDragOver] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback(
@@ -53,119 +35,58 @@ function AIMode() {
       const reader = new FileReader();
       reader.onload = (e) => {
         const result = e.target?.result as string;
-        setUploadedImage(result, file.name);
-        setErrors((prev) => ({ ...prev, image: "" }));
+        // Get image dimensions
+        const img = new Image();
+        img.onload = () => {
+          setUploadedImage(result, file.name, img.naturalWidth, img.naturalHeight);
+        };
+        img.src = result;
       };
       reader.readAsDataURL(file);
     },
     [setUploadedImage]
   );
 
-  const validate = useCallback(() => {
-    const newErrors: Record<string, string> = {};
-    if (!uploadedImage) newErrors.image = "Sube una foto del mueble";
-    if (!userDimensions.width || userDimensions.width <= 0)
-      newErrors.width = "Requerido";
-    if (!userDimensions.height || userDimensions.height <= 0)
-      newErrors.height = "Requerido";
-    if (!userDimensions.depth || userDimensions.depth <= 0)
-      newErrors.depth = "Requerido";
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  }, [uploadedImage, userDimensions]);
-
-  const handleGenerate = useCallback(async () => {
-    if (!validate()) {
-      toast.error("Completa todos los campos requeridos");
+  const handleDetect = useCallback(async () => {
+    if (!uploadedImage) {
+      toast.error("Sube una imagen primero");
       return;
     }
 
+    const { uploadedImageWidth, uploadedImageHeight } = useMobiStore.getState();
     setPhase("generating");
     setError(null);
+    setGeneratingStep("Detectando texto en la imagen...");
 
     try {
-      // Step 1: Analyze photo
-      setGeneratingStep("Analizando imagen...");
-
-      const analyzeRes = await fetch("/api/analyze-photo", {
+      const detectRes = await fetch("/api/detect-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           image: uploadedImage,
-          dimensions: userDimensions,
-          brand: userBrand,
-        }),
-      });
-
-      if (!analyzeRes.ok) {
-        const errData = await analyzeRes.json();
-        throw new Error(errData.error || "Error al analizar la imagen");
-      }
-
-      const analyzeData = await analyzeRes.json();
-      const furnitureData: FurnitureData = analyzeData.data;
-
-      // Override with user-provided values
-      furnitureData.brand = userBrand;
-      furnitureData.dimensions = {
-        ...furnitureData.dimensions,
-        width: userDimensions.width,
-        height: userDimensions.height,
-        depth: userDimensions.depth,
-        seatHeight:
-          userDimensions.seatHeight ||
-          furnitureData.dimensions?.seatHeight ||
-          undefined,
-      };
-      if (userProductName) {
-        furnitureData.productName = userProductName;
-      }
-
-      setFurnitureData(furnitureData);
-
-      // Step 2: Generate ficha image
-      setGeneratingStep("Generando ficha técnica...");
-
-      const sheetResponse = await fetch("/api/generate-sheet", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ furnitureData }),
-      });
-
-      if (!sheetResponse.ok) {
-        const errData = await sheetResponse.json();
-        throw new Error(errData.error || "Error al generar ficha");
-      }
-
-      const sheetData = await sheetResponse.json();
-      setReferenceImage(sheetData.image);
-
-      // Step 3: Detect positions with grid overlay
-      setGeneratingStep("Detectando posiciones de texto...");
-
-      const detectRes = await fetch("/api/detect-positions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image: sheetData.image,
-          furnitureData,
+          imageWidth: uploadedImageWidth,
+          imageHeight: uploadedImageHeight,
         }),
       });
 
       if (!detectRes.ok) {
         const errData = await detectRes.json();
-        throw new Error(errData.error || "Error al detectar posiciones");
+        throw new Error(errData.error || "Error al detectar texto");
       }
 
       const detectData = await detectRes.json();
+      const result: DetectionResult = detectData.result;
 
-      // The API wraps result in { result: ... }
-      setGridPositions(detectData.result);
+      if (!result.regions || result.regions.length === 0) {
+        throw new Error("No se detectó texto en la imagen. Intenta con otra imagen más clara.");
+      }
+
+      setDetectionResult(result);
 
       // Small delay for UX
       await new Promise((r) => setTimeout(r, 500));
 
-      setPhase("review");
+      setPhase("editing");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Error desconocido";
       setError(message);
@@ -174,235 +95,12 @@ function AIMode() {
     } finally {
       setGeneratingStep(null);
     }
-  }, [
-    validate,
-    uploadedImage,
-    userDimensions,
-    userBrand,
-    userProductName,
-    setPhase,
-    setError,
-    setGeneratingStep,
-    setFurnitureData,
-    setReferenceImage,
-    setGridPositions,
-  ]);
+  }, [uploadedImage, setPhase, setError, setGeneratingStep, setDetectionResult]);
 
   const removeImage = useCallback(() => {
-    setUploadedImage("", "");
+    setUploadedImage("", "", 0, 0);
   }, [setUploadedImage]);
 
-  return (
-    <div className="space-y-6">
-      {/* Image Upload */}
-      <div className="space-y-2">
-        <Label className="text-sm font-semibold">Foto del mueble</Label>
-        {!uploadedImage ? (
-          <div
-            onDrop={(e) => {
-              e.preventDefault();
-              setIsDragOver(false);
-              const file = e.dataTransfer.files[0];
-              if (file) handleFile(file);
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setIsDragOver(true);
-            }}
-            onDragLeave={() => setIsDragOver(false)}
-            onClick={() => fileInputRef.current?.click()}
-            className={`
-              relative border-2 border-dashed rounded-xl p-8 sm:p-12
-              cursor-pointer transition-all duration-200 text-center
-              ${
-                isDragOver
-                  ? "border-primary bg-primary/5 scale-[1.01]"
-                  : errors.image
-                    ? "border-destructive/50 bg-destructive/5"
-                    : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50"
-              }
-            `}
-          >
-            <motion.div
-              animate={isDragOver ? { scale: 1.1 } : { scale: 1 }}
-              transition={{ type: "spring", stiffness: 300 }}
-            >
-              <Upload className="mx-auto h-10 w-10 text-muted-foreground/60 mb-3" />
-            </motion.div>
-            <p className="text-sm font-medium">
-              Arrastra una foto aquí o haz clic para seleccionar
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              JPG, PNG o WebP — máximo 20MB
-            </p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleFile(file);
-              }}
-              className="hidden"
-            />
-          </div>
-        ) : (
-          <div className="relative rounded-xl overflow-hidden border border-border/50 bg-muted/30">
-            <div className="flex items-center gap-3 p-3">
-              <div className="h-20 w-20 rounded-lg overflow-hidden flex-shrink-0 bg-muted">
-                <img
-                  src={uploadedImage}
-                  alt="Vista previa"
-                  className="h-full w-full object-cover"
-                />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <ImageIcon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                  <p className="text-sm font-medium truncate">
-                    {uploadedImageName}
-                  </p>
-                </div>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Imagen lista para analizar
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={removeImage}
-                className="flex-shrink-0 text-muted-foreground hover:text-destructive"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        )}
-        {errors.image && (
-          <p className="text-xs text-destructive">{errors.image}</p>
-        )}
-      </div>
-
-      {/* Dimensions */}
-      <div className="space-y-3">
-        <Label className="text-sm font-semibold flex items-center gap-2">
-          <Ruler className="h-4 w-4" />
-          Dimensiones
-        </Label>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="space-y-1">
-            <Label htmlFor="width" className="text-xs text-muted-foreground">
-              Ancho (cm) *
-            </Label>
-            <Input
-              id="width"
-              type="number"
-              min={1}
-              placeholder="130"
-              value={userDimensions.width || ""}
-              onChange={(e) =>
-                setUserDimensions({ width: Number(e.target.value) })
-              }
-              className={errors.width ? "border-destructive" : ""}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="height" className="text-xs text-muted-foreground">
-              Alto (cm) *
-            </Label>
-            <Input
-              id="height"
-              type="number"
-              min={1}
-              placeholder="75"
-              value={userDimensions.height || ""}
-              onChange={(e) =>
-                setUserDimensions({ height: Number(e.target.value) })
-              }
-              className={errors.height ? "border-destructive" : ""}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="depth" className="text-xs text-muted-foreground">
-              Profundidad (cm) *
-            </Label>
-            <Input
-              id="depth"
-              type="number"
-              min={1}
-              placeholder="55"
-              value={userDimensions.depth || ""}
-              onChange={(e) =>
-                setUserDimensions({ depth: Number(e.target.value) })
-              }
-              className={errors.depth ? "border-destructive" : ""}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label
-              htmlFor="seatHeight"
-              className="text-xs text-muted-foreground"
-            >
-              Alt. Asiento (cm)
-            </Label>
-            <Input
-              id="seatHeight"
-              type="number"
-              min={0}
-              placeholder="45"
-              value={userDimensions.seatHeight || ""}
-              onChange={(e) =>
-                setUserDimensions({ seatHeight: Number(e.target.value) })
-              }
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Brand & Product Name */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="space-y-1">
-          <Label htmlFor="brand" className="text-xs text-muted-foreground">
-            Marca
-          </Label>
-          <Input
-            id="brand"
-            placeholder="VIVA MOBILI"
-            value={userBrand}
-            onChange={(e) => setUserBrand(e.target.value)}
-          />
-        </div>
-        <div className="space-y-1">
-          <Label
-            htmlFor="productName"
-            className="text-xs text-muted-foreground"
-          >
-            Nombre del producto
-          </Label>
-          <Input
-            id="productName"
-            placeholder="Opcional"
-            value={userProductName}
-            onChange={(e) => setUserProductName(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {/* Generate Button */}
-      <Button
-        onClick={handleGenerate}
-        size="lg"
-        className="w-full text-base font-semibold h-12 gap-2"
-      >
-        <Sparkles className="h-5 w-5" />
-        Generar Ficha Técnica con IA
-      </Button>
-    </div>
-  );
-}
-
-// ─── Main Component ────────────────────────────────────
-export default function InputPhase() {
   return (
     <div className="min-h-screen flex items-center justify-center p-4 sm:p-6 lg:p-8">
       <motion.div
@@ -427,13 +125,117 @@ export default function InputPhase() {
             transition={{ delay: 0.2 }}
             className="text-muted-foreground mt-2"
           >
-            Generador de fichas técnicas para mobiliario
+            Detecta y edita texto en fichas técnicas con IA
           </motion.p>
         </div>
 
         <Card className="border-border/50 shadow-xl">
           <CardContent className="p-6 space-y-6">
-            <AIMode />
+            {/* Image Upload */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold">Sube tu ficha técnica</h3>
+              <p className="text-xs text-muted-foreground">
+                La IA detectará todo el texto y crearás campos editables en las posiciones exactas
+              </p>
+              {!uploadedImage ? (
+                <div
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragOver(false);
+                    const file = e.dataTransfer.files[0];
+                    if (file) handleFile(file);
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragOver(true);
+                  }}
+                  onDragLeave={() => setIsDragOver(false)}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`
+                    relative border-2 border-dashed rounded-xl p-8 sm:p-12
+                    cursor-pointer transition-all duration-200 text-center
+                    ${
+                      isDragOver
+                        ? "border-primary bg-primary/5 scale-[1.01]"
+                        : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50"
+                    }
+                  `}
+                >
+                  <motion.div
+                    animate={isDragOver ? { scale: 1.1 } : { scale: 1 }}
+                    transition={{ type: "spring", stiffness: 300 }}
+                  >
+                    <Upload className="mx-auto h-10 w-10 text-muted-foreground/60 mb-3" />
+                  </motion.div>
+                  <p className="text-sm font-medium">
+                    Arrastra una imagen aquí o haz clic para seleccionar
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    JPG, PNG o WebP — máximo 20MB
+                  </p>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleFile(file);
+                    }}
+                    className="hidden"
+                  />
+                </div>
+              ) : (
+                <div className="relative rounded-xl overflow-hidden border border-border/50 bg-muted/30">
+                  <div className="flex items-center gap-3 p-3">
+                    <div className="h-20 w-20 rounded-lg overflow-hidden flex-shrink-0 bg-muted">
+                      <img
+                        src={uploadedImage}
+                        alt="Vista previa"
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <ImageIcon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        <p className="text-sm font-medium truncate">
+                          {uploadedImageName}
+                        </p>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Imagen lista para analizar
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={removeImage}
+                      className="flex-shrink-0 text-muted-foreground hover:text-destructive"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  {/* Image preview */}
+                  <div className="border-t border-border/30 p-2">
+                    <img
+                      src={uploadedImage}
+                      alt="Preview"
+                      className="w-full h-auto max-h-80 object-contain rounded-lg"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Detect Button */}
+            <Button
+              onClick={handleDetect}
+              size="lg"
+              disabled={!uploadedImage}
+              className="w-full text-base font-semibold h-12 gap-2"
+            >
+              <Sparkles className="h-5 w-5" />
+              Detectar Texto con IA
+            </Button>
           </CardContent>
         </Card>
       </motion.div>

@@ -1,94 +1,59 @@
 import { create } from "zustand";
 
-export interface FurnitureDimensions {
-  width: number;
-  height: number;
-  depth: number;
-  seatHeight?: number;
-}
-
-export interface FurnitureData {
-  productType: string;
-  style: string;
-  material: {
-    main: string;
-    details: string[];
-  };
-  finish: string;
-  feature: string;
-  dimensions: FurnitureDimensions;
-  weight: number;
-  annotations: string[];
-  colorPalette: {
-    primary: string;
-    primaryName: string;
-    secondary: string;
-    secondaryName: string;
-    pearlGray: string;
-    darkGray: string;
-  };
-  brand: string;
-  productName: string;
-  renderViews: string[];
-}
-
-export interface GridField {
+/**
+ * A single detected text region on the image.
+ * Positions and sizes are stored as percentages (0-100) of the image dimensions
+ * so they remain correct at any display scale.
+ */
+export interface TextRegion {
   id: string;
-  cells: string;
-  text: string;
-  fontSize: number;
-  type: "text" | "number" | "label" | "color";
+  x: number;       // percentage from left
+  y: number;       // percentage from top
+  w: number;       // percentage width
+  h: number;       // percentage height
+  text: string;    // detected text content (default value)
+  fontSize: number; // approximate pixel size relative to original image width
+  color: string;   // detected text color (#hex)
+  bold: boolean;   // whether the text appears bold
   editable: boolean;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
 }
 
-export interface GridPositions {
-  sheetBgColor: string;
-  fields: GridField[];
-  imageWidth: number;
-  imageHeight: number;
+export interface DetectionResult {
+  regions: TextRegion[];
+  imageWidth: number;   // original image width in px
+  imageHeight: number;  // original image height in px
 }
 
-export interface ExtraElement {
-  id: string;
-  type: "logo" | "stamp" | "image" | "text";
-  data: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  fontSize?: number;
-}
-
-export type AppPhase = "input" | "generating" | "review" | "editing" | "export";
+export type AppPhase = "input" | "generating" | "editing" | "export";
 
 interface MobiStore {
+  // Phase
   phase: AppPhase;
   setPhase: (phase: AppPhase) => void;
+
+  // Uploaded image
   uploadedImage: string | null;
   uploadedImageName: string | null;
-  userDimensions: FurnitureDimensions;
-  userBrand: string;
-  userProductName: string;
-  setUploadedImage: (data: string, name: string) => void;
-  setUserDimensions: (dims: Partial<FurnitureDimensions>) => void;
-  setUserBrand: (brand: string) => void;
-  setUserProductName: (name: string) => void;
-  furnitureData: FurnitureData | null;
-  referenceImage: string | null;
-  gridPositions: GridPositions | null;
-  setFurnitureData: (data: FurnitureData) => void;
-  setReferenceImage: (img: string | null) => void;
-  setGridPositions: (positions: GridPositions) => void;
-  editedData: FurnitureData | null;
-  updateField: (path: string, value: unknown) => void;
-  extras: ExtraElement[];
-  addExtra: (extra: ExtraElement) => void;
-  removeExtra: (id: string) => void;
-  updateExtra: (id: string, updates: Partial<ExtraElement>) => void;
+  uploadedImageWidth: number;
+  uploadedImageHeight: number;
+  setUploadedImage: (data: string, name: string, width: number, height: number) => void;
+
+  // Detection result
+  detectionResult: DetectionResult | null;
+  setDetectionResult: (result: DetectionResult) => void;
+
+  // Edited regions (starts as copy of detectionResult.regions)
+  editedRegions: TextRegion[];
+  setEditedRegions: (regions: TextRegion[]) => void;
+  updateRegion: (id: string, updates: Partial<TextRegion>) => void;
+
+  // Active field for highlighting
+  activeFieldId: string | null;
+  setActiveFieldId: (id: string | null) => void;
+
+  // UI state
+  scale: number;
+  setScale: (scale: number) => void;
   generatingStep: string | null;
   error: string | null;
   setGeneratingStep: (step: string | null) => void;
@@ -96,63 +61,45 @@ interface MobiStore {
   reset: () => void;
 }
 
-const defaultDimensions: FurnitureDimensions = {
-  width: 0,
-  height: 0,
-  depth: 0,
-  seatHeight: 0,
-};
-
 const initialState = {
   phase: "input" as AppPhase,
   uploadedImage: null as string | null,
   uploadedImageName: null as string | null,
-  userDimensions: { ...defaultDimensions },
-  userBrand: "VIVA MOBILI",
-  userProductName: "",
-  furnitureData: null as FurnitureData | null,
-  referenceImage: null as string | null,
-  gridPositions: null as GridPositions | null,
-  editedData: null as FurnitureData | null,
-  extras: [] as ExtraElement[],
+  uploadedImageWidth: 0,
+  uploadedImageHeight: 0,
+  detectionResult: null as DetectionResult | null,
+  editedRegions: [] as TextRegion[],
+  activeFieldId: null as string | null,
+  scale: 100,
   generatingStep: null as string | null,
   error: null as string | null,
 };
 
-function setPathValue(obj: Record<string, any>, path: string, value: unknown): Record<string, any> {
-  const keys = path.split(".");
-  const result: Record<string, any> = JSON.parse(JSON.stringify(obj));
-  let current: Record<string, unknown> = result as Record<string, unknown>;
-  for (let i = 0; i < keys.length - 1; i++) {
-    if (current[keys[i]] === undefined) {
-      current[keys[i]] = {};
-    }
-    current = current[keys[i]] as Record<string, unknown>;
-  }
-  current[keys[keys.length - 1]] = value;
-  return result;
-}
-
 export const useMobiStore = create<MobiStore>((set) => ({
   ...initialState,
   setPhase: (phase) => set({ phase }),
-  setUploadedImage: (data, name) => set({ uploadedImage: data, uploadedImageName: name }),
-  setUserDimensions: (dims) => set((state) => ({ userDimensions: { ...state.userDimensions, ...dims } })),
-  setUserBrand: (brand) => set({ userBrand: brand }),
-  setUserProductName: (name) => set({ userProductName: name }),
-  setFurnitureData: (data) => set({ furnitureData: data, editedData: JSON.parse(JSON.stringify(data)) }),
-  setReferenceImage: (img) => set({ referenceImage: img }),
-  setGridPositions: (positions) => set({ gridPositions: positions }),
-  updateField: (path, value) =>
-    set((state) => {
-      if (!state.editedData) return {};
-      const updated = setPathValue(state.editedData as unknown as Record<string, unknown>, path, value);
-      return { editedData: updated as unknown as FurnitureData };
+
+  setUploadedImage: (data, name, width, height) =>
+    set({ uploadedImage: data, uploadedImageName: name, uploadedImageWidth: width, uploadedImageHeight: height }),
+
+  setDetectionResult: (result) =>
+    set({
+      detectionResult: result,
+      editedRegions: result.regions.map((r) => ({ ...r })),
     }),
-  addExtra: (extra) => set((state) => ({ extras: [...state.extras, extra] })),
-  removeExtra: (id) => set((state) => ({ extras: state.extras.filter((e) => e.id !== id) })),
-  updateExtra: (id, updates) => set((state) => ({ extras: state.extras.map((e) => e.id === id ? { ...e, ...updates } : e) })),
+
+  setEditedRegions: (regions) => set({ editedRegions: regions }),
+
+  updateRegion: (id, updates) =>
+    set((state) => ({
+      editedRegions: state.editedRegions.map((r) =>
+        r.id === id ? { ...r, ...updates } : r
+      ),
+    })),
+
+  setActiveFieldId: (id) => set({ activeFieldId: id }),
+  setScale: (scale) => set({ scale }),
   setGeneratingStep: (step) => set({ generatingStep: step }),
   setError: (error) => set({ error }),
-  reset: () => set({ ...initialState, userDimensions: { ...defaultDimensions } }),
+  reset: () => set({ ...initialState }),
 }));
